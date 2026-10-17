@@ -40,7 +40,7 @@ const client = new Client({
 
 const DB_FILE = './database.json';
 let db = { 
-    settings: { lang: 'ar', waitingInterview: {}, waitingHelp: {}, tickets: {} }, 
+    settings: { waitingInterview: {}, waitingHelp: {}, tickets: {} }, 
     warns: {}, 
     work: {}, 
     activeWork: {}, 
@@ -50,7 +50,7 @@ let db = {
 if (fs.existsSync(DB_FILE)) {
     try {
         db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-        if (!db.settings) db.settings = { lang: 'ar', waitingInterview: {}, waitingHelp: {}, tickets: {} };
+        if (!db.settings) db.settings = { waitingInterview: {}, waitingHelp: {}, tickets: {} };
         if (!db.warns) db.warns = {};
         if (!db.work) db.work = {};
         if (!db.activeWork) db.activeWork = {};
@@ -180,7 +180,7 @@ client.on('interactionCreate', async (interaction) => {
 
                 const embed = new EmbedBuilder()
                     .setTitle('📌 لوحة تحكم سيرفر Marsa RP الرئيسية')
-                    .setDescription(`اختر الخيار المطلوب من القائمة المنسدلة بالأسفل:\n🌐 **اللغة الحالية:** ${db.settings.lang === 'ar' ? 'العربية 🇸🇦' : 'English 🇬🇧'}`)
+                    .setDescription('اختر الخيار المطلوب من القائمة المنسدلة بالأسفل:')
                     .setColor(0x00AE86);
 
                 const menu = new StringSelectMenuBuilder()
@@ -190,8 +190,7 @@ client.on('interactionCreate', async (interaction) => {
                         { label: 'إعداد Waiting for Interview', description: 'تحديد القناة، ورتبة المنشن', value: 'opt_setup_w_interview', emoji: '🎙️' },
                         { label: 'إعداد Waiting for Help', description: 'تحديد قناة المساعدة ورتبة الدعم', value: 'opt_setup_w_help', emoji: '❓' },
                         { label: 'إعداد نظام التذاكر (Ticket Setup)', description: 'إنشاء تكت Dev App, Staff, Interview وتحديد الأسئلة', value: 'opt_setup_tickets', emoji: '🎫' },
-                        { label: 'إعداد نظام تسجيل الدوام والوقت', description: 'نشر زر بدء الوقت والتقارير الأسبوعية/الشهري', value: 'opt_setup_work_timer', emoji: '⏱️' },
-                        { label: 'تغيير لغة البوت (Language)', description: 'التبديل بين العربية والإنجليزية', value: 'opt_change_lang', emoji: '🌐' }
+                        { label: 'إعداد نظام تسجيل الدوام والوقت', description: 'نشر زر بدء الوقت والتقارير الأسبوعية/الشهري', value: 'opt_setup_work_timer', emoji: '⏱️' }
                     ]);
 
                 return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
@@ -250,12 +249,6 @@ client.on('interactionCreate', async (interaction) => {
                 const chan = new TextInputBuilder().setCustomId('work_post_chan').setLabel('آيدي القناة لنشر زر الدوام').setStyle(TextInputStyle.Short).setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(chan));
                 return await interaction.showModal(modal);
-            }
-
-            if (val === 'opt_change_lang') {
-                db.settings.lang = db.settings.lang === 'ar' ? 'en' : 'ar';
-                saveDB();
-                return await interaction.reply({ content: `✅ تم تغيير لغة البوت إلى: **${db.settings.lang === 'ar' ? 'العربية 🇸🇦' : 'English 🇬🇧'}**`, ephemeral: true });
             }
         }
 
@@ -410,48 +403,4 @@ client.on('interactionCreate', async (interaction) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.channel.isDMBased()) return;
 
-    const uid = message.author.id;
-    const session = db.userSessions[uid];
-
-    if (session) {
-        session.answers.push(message.content);
-        session.currentStep += 1;
-
-        if (session.currentStep < session.questions.length) {
-            const nextQ = session.questions[session.currentStep];
-            await message.reply(`❓ **السؤال (${session.currentStep + 1}/${session.questions.length}):** ${nextQ}`);
-            saveDB();
-        } else {
-            await message.reply('🎉 **تم استلام جميع إجاباتك بنجاح!** تم إرسال التذكرة إلى الفريق المختص.');
-
-            const ticketData = db.settings.tickets;
-            if (ticketData && ticketData.recvChanId) {
-                const targetChan = await client.channels.fetch(ticketData.recvChanId).catch(() => null);
-                if (targetChan) {
-                    let desc = `**صاحب التذكرة:** <@${uid}>\n**نوع التذكرة:** \`${session.type.toUpperCase()}\`\n\n`;
-                    session.questions.forEach((q, idx) => {
-                        desc += `**س${idx + 1}: ${q}**\nج: ${session.answers[idx]}\n\n`;
-                    });
-
-                    const embed = new EmbedBuilder()
-                        .setTitle(`📥 إجابات تذكرة جديدة - ${session.type.toUpperCase()}`)
-                        .setDescription(desc)
-                        .setColor(0x9B59B6)
-                        .setTimestamp();
-
-                    await targetChan.send({ 
-                        content: ticketData.roleId ? `<@&${ticketData.roleId}>` : '', 
-                        embeds: [embed] 
-                    });
-                }
-            }
-
-            delete db.userSessions[uid];
-            saveDB();
-        }
-    }
-});
-
-process.on('unhandledRejection', error => console.error('استثناء غير معالج:', error));
-
-client.login(BOT_TOKEN);
+    const uid =
