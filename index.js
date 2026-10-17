@@ -17,10 +17,15 @@ const {
 } = require('discord.js');
 const fs = require('fs');
 
-// ==================== [ Data Configuration ] ====================
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = '1560278126242562149';
 const GUILD_ID  = '1559798237743808535';
+
+if (!BOT_TOKEN) {
+    console.error("❌ BOT_TOKEN introuvable dans les variables d'environnement !");
+    process.exit(1);
+}
+
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -34,7 +39,7 @@ const client = new Client({
 });
 
 const DB_FILE = './database.json';
-let db = { settings: { lang: 'ar' }, warns: {}, applications: {}, alerts: {}, work: {}, workers: {} };
+let db = { settings: { lang: 'ar' }, warns: {}, applications: {}, alerts: {}, work: {}, workers: {}, waiting: {} };
 
 if (fs.existsSync(DB_FILE)) {
     try {
@@ -42,17 +47,21 @@ if (fs.existsSync(DB_FILE)) {
         if (!db.work) db.work = {};
         if (!db.workers) db.workers = {};
         if (!db.warns) db.warns = {};
+        if (!db.waiting) db.waiting = {};
         if (!db.settings) db.settings = { lang: 'ar' };
     } catch (e) {
-        console.log("Re-initializing local database...");
+        console.log("Réinitialisation de la base de données locale...");
     }
 }
 
 function saveDB() {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+    } catch (err) {
+        console.error("Erreur de sauvegarde DB:", err);
+    }
 }
 
-// Penalties Table from your rules image
 const penaltiesTable = {
     "META GAMING": { 1: "Warning", 2: "1hr kick/mute", 3: "1-day ban" },
     "POWER GAMING": { 1: "Verbal warning", 2: "30min kick", 3: "1-day ban" },
@@ -71,210 +80,191 @@ const penaltiesTable = {
 };
 
 client.once('ready', async () => {
-    console.log(`✅ Bot ready & logged in as: ${client.user.tag}`);
+    console.log(`✅ Bot connecté sous le nom : ${client.user.tag}`);
 
     const commands = [
-        new SlashCommandBuilder().setName('panel').setDescription('Main Admin Panel (Marsa RP)'),
-        new SlashCommandBuilder().setName('staffpanel').setDescription('Staff Team Penalties Panel (Ban/Warn)')
+        new SlashCommandBuilder().setName('panel').setDescription('Panneau d\'administration principal Marsa RP'),
+        new SlashCommandBuilder().setName('staffpanel').setDescription('Panneau du staff pour avertissements et ban (Marsa RP)')
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
     try {
-        console.log('Registering Slash Commands...');
         await rest.put(
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
             { body: commands }
         );
-        console.log('🎉 Commands registered successfully!');
+        console.log('🎉 Commandes enregistrées avec succès !');
     } catch (error) {
-        console.error('❌ Registration error:', error);
-    }
-});
-
-client.on('guildMemberAdd', async (member) => {
-    try {
-        const defaultNick = `Marsa | ${member.user.username}`;
-        await member.setNickname(defaultNick).catch(() => {});
-    } catch (e) {
-        console.log("Cannot change nickname automatically.");
+        console.error('Erreur commandes:', error.message);
     }
 });
 
 client.on('interactionCreate', async (interaction) => {
     try {
-        if (interaction.isChatInputCommand() && interaction.commandName === 'panel') {
-            if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                return interaction.reply({ content: '❌ Reserved for Admins only!', ephemeral: true });
+        if (interaction.isChatInputCommand()) {
+            if (interaction.commandName === 'panel') {
+                if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: '❌ Réservé aux administrateurs !', ephemeral: true });
+                }
+
+                const embed = new EmbedBuilder()
+                    .setTitle('📌 Panneau d\'administration Marsa RP')
+                    .setDescription('Sélectionnez une option ci-dessous pour gérer le serveur :')
+                    .setColor(0x00AE86);
+
+                const menu = new StringSelectMenuBuilder()
+                    .setCustomId('bot_control_menu')
+                    .setPlaceholder('... Choisir une option de contrôle')
+                    .addOptions([
+                        { label: 'Configuration Salon Service', description: 'Configurer le système de prise de service', value: 'option_setup_work', emoji: '💼' },
+                        { label: 'Configuration Salon Waiting', description: 'Définir le salon de notifications d\'attente', value: 'option_setup_waiting', emoji: '⏳' },
+                        { label: 'Leaderboard Service', description: 'Afficher les membres les plus actifs', value: 'option_top_workers', emoji: '🏆' },
+                        { label: 'Changer le nom du bot', description: 'Modifier le pseudo du bot', value: 'option_change_name', emoji: '✏️' },
+                        { label: 'Changer l\'avatar du bot', description: 'Modifier la photo de profil du bot', value: 'option_change_avatar', emoji: '🖼️' }
+                    ]);
+
+                const rowMenu = new ActionRowBuilder().addComponents(menu);
+                const rowButtons = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('open_app_selection').setLabel('📝 Candidatures (Applications)').setStyle(ButtonStyle.Primary),
+                    new ButtonBuilder().setCustomId('setup_lang').setLabel('🌐 Changer la langue').setStyle(ButtonStyle.Secondary)
+                );
+
+                return await interaction.reply({ embeds: [embed], components: [rowMenu, rowButtons], ephemeral: true });
             }
 
-            const embed = new EmbedBuilder()
-                .setTitle('📌 Marsa RP Admin Panel')
-                .setDescription(`Select an option below:\n🌐 **Language:** ${db.settings.lang === 'ar' ? 'العربية 🇸🇦' : 'English 🇬🇧'}`)
-                .setColor(0x00AE86);
+            if (interaction.commandName === 'staffpanel') {
+                if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
+                    return interaction.reply({ content: '❌ Réservé au Staff !', ephemeral: true });
+                }
 
-            const menu = new StringSelectMenuBuilder()
-                .setCustomId('bot_control_menu')
-                .setPlaceholder('... Select control option')
-                .addOptions([
-                    { label: 'Work Channel Setup', description: 'Setup work buttons in a channel', value: 'option_setup_work', emoji: '💼' },
-                    { label: 'Top Workers Leaderboard', description: 'Show active workers', value: 'option_top_workers', emoji: '🏆' },
-                    { label: 'Active Voice 24/7', description: 'Keep bot in voice channel', value: 'option_voice_247', emoji: '🔊' },
-                    { label: 'Interview Notif Channel', description: 'Set interview alert channel', value: 'option_interview_chan', emoji: '🎙️' },
-                    { label: 'General Broadcast', description: 'Send broadcast message', value: 'option_broadcast', emoji: '📢' },
-                    { label: 'Change Bot Name', description: 'Modify bot name', value: 'option_change_name', emoji: '✏️' },
-                    { label: 'Change Bot Avatar', description: 'Modify bot avatar', value: 'option_change_avatar', emoji: '🖼️' }
-                ]);
+                const embed = new EmbedBuilder()
+                    .setTitle('🛡️ Panneau Staff - Marsa RP')
+                    .setDescription('Gestion des sanctions et des avertissements :')
+                    .setColor(0xFF0000);
 
-            const rowMenu = new ActionRowBuilder().addComponents(menu);
-            const rowButtons = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('setup_app').setLabel('📝 Setup Application').setStyle(ButtonStyle.Primary),
-                new ButtonBuilder().setCustomId('setup_lang').setLabel('🌐 Change Language').setStyle(ButtonStyle.Secondary)
-            );
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('open_warn_system').setLabel('⚠️ Appliquer une Sanction / Ban').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId('send_waiting_notif').setLabel('⏳ Envoyer Notification Waiting').setStyle(ButtonStyle.Warning),
+                    new ButtonBuilder().setCustomId('check_player_history').setLabel('🔍 Historique du Joueur').setStyle(ButtonStyle.Primary)
+                );
 
-            return await interaction.reply({ embeds: [embed], components: [rowMenu, rowButtons], ephemeral: true });
+                return await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+            }
         }
 
-        if (interaction.isChatInputCommand() && interaction.commandName === 'staffpanel') {
-            if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
-                return interaction.reply({ content: '❌ Reserved for Staff Team only!', ephemeral: true });
-            }
-
+        // --- CHOIX DES APPLICATIONS (Dev App vs Staff App) ---
+        if (interaction.isButton() && interaction.customId === 'open_app_selection') {
             const embed = new EmbedBuilder()
-                .setTitle('🛡️ Staff Panel (Marsa RP)')
-                .setDescription('Manage user penalties according to server rules:')
-                .setColor(0xFF0000);
+                .setTitle('📋 Choisir le type de candidature')
+                .setDescription('Veuillez sélectionner le type de candidature que vous souhaitez ouvrir dans le menu ci-dessous :')
+                .setColor(0x3498DB);
 
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('open_warn_system').setLabel('⚠️ Give Penalty (Warn/Ban)').setStyle(ButtonStyle.Danger),
-                new ButtonBuilder().setCustomId('check_player_history').setLabel('🔍 Check Player History').setStyle(ButtonStyle.Primary)
-            );
+            const selectApp = new StringSelectMenuBuilder()
+                .setCustomId('select_application_type')
+                .setPlaceholder('... Choisissez une candidature')
+                .addOptions([
+                    { label: 'Candidature Développeur (Dev App)', description: 'Postuler pour rejoindre l\'équipe de développement', value: 'app_dev', emoji: '💻' },
+                    { label: 'Candidature Staff / RP', description: 'Postuler pour intégrer l\'équipe d\'animation ou modération', value: 'app_staff', emoji: '🛡️' }
+                ]);
 
+            const row = new ActionRowBuilder().addComponents(selectApp);
             return await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
         }
 
+        if (interaction.isStringSelectMenu() && interaction.customId === 'select_application_type') {
+            const chosen = interaction.values[0];
+
+            if (chosen === 'app_dev') {
+                const modal = new ModalBuilder().setCustomId('modal_submit_dev_app').setTitle('Candidature Développeur (Dev App)');
+                const exp = new TextInputBuilder().setCustomId('dev_exp').setLabel('Vos compétences (Lua, JS, HTML...)').setStyle(TextInputStyle.Paragraph).setRequired(true);
+                const projects = new TextInputBuilder().setCustomId('dev_projects').setLabel('Vos anciens projets').setStyle(TextInputStyle.Paragraph).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(exp), new ActionRowBuilder().addComponents(projects));
+                return await interaction.showModal(modal);
+            }
+
+            if (chosen === 'app_staff') {
+                const modal = new ModalBuilder().setCustomId('modal_submit_staff_app').setTitle('Candidature Staff / RP');
+                const age = new TextInputBuilder().setCustomId('staff_age').setLabel('Votre âge').setStyle(TextInputStyle.Short).setRequired(true);
+                const exp = new TextInputBuilder().setCustomId('staff_exp').setLabel('Expérience Roleplay / Modération').setStyle(TextInputStyle.Paragraph).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(age), new ActionRowBuilder().addComponents(exp));
+                return await interaction.showModal(modal);
+            }
+        }
+
+        // --- MENU SELECTION ADMIN / STAFF ---
         if (interaction.isStringSelectMenu() && interaction.customId === 'bot_control_menu') {
             const selected = interaction.values[0];
 
+            if (selected === 'option_setup_waiting') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_waiting_chan').setTitle('Configuration Salon Waiting');
+                const input = new TextInputBuilder().setCustomId('waiting_chan_id').setLabel('ID du salon Waiting / Notification').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(input));
+                return await interaction.showModal(modal);
+            }
+
             if (selected === 'option_setup_work') {
-                const modal = new ModalBuilder().setCustomId('modal_setup_work').setTitle('Work Setup');
-                const chanInput = new TextInputBuilder().setCustomId('work_chan_id').setLabel('Work Channel ID').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chanInput));
-                return await interaction.showModal(modal);
-            }
-
-            if (selected === 'option_top_workers') {
-                const sortedWorkers = Object.entries(db.workers || {})
-                    .sort((a, b) => b[1].score - a[1].score)
-                    .slice(0, 10);
-
-                let desc = '🏆 **Top Active Workers (Top 10):**\n\n';
-                if (sortedWorkers.length === 0) {
-                    desc += 'No work data registered yet.';
-                } else {
-                    sortedWorkers.forEach(([userId, data], index) => {
-                        desc += `**#${index + 1}** - <@${userId}> ➔ Duty count: **${data.score}**\n`;
-                    });
-                }
-
-                const embed = new EmbedBuilder().setTitle('📊 Leaderboard').setDescription(desc).setColor(0xFFD700);
-                return await interaction.reply({ embeds: [embed], ephemeral: true });
-            }
-
-            if (selected === 'option_change_name') {
-                const modal = new ModalBuilder().setCustomId('modal_change_name').setTitle('Change Bot Name');
-                const nameInput = new TextInputBuilder().setCustomId('new_bot_name').setLabel('New Name').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(nameInput));
-                return await interaction.showModal(modal);
-            }
-
-            if (selected === 'option_change_avatar') {
-                const modal = new ModalBuilder().setCustomId('modal_change_avatar').setTitle('Change Avatar');
-                const avatarInput = new TextInputBuilder().setCustomId('new_bot_avatar').setLabel('Avatar Image URL').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(avatarInput));
-                return await interaction.showModal(modal);
-            }
-
-            if (selected === 'option_broadcast') {
-                const modal = new ModalBuilder().setCustomId('modal_broadcast').setTitle('Broadcast Message');
-                const chanInput = new TextInputBuilder().setCustomId('broadcast_chan').setLabel('Channel ID').setStyle(TextInputStyle.Short).setRequired(true);
-                const msgInput = new TextInputBuilder().setCustomId('broadcast_msg').setLabel('Message Content').setStyle(TextInputStyle.Paragraph).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chanInput), new ActionRowBuilder().addComponents(msgInput));
-                return await interaction.showModal(modal);
-            }
-
-            if (selected === 'option_interview_chan') {
-                const modal = new ModalBuilder().setCustomId('modal_interview_chan').setTitle('Interview Channel');
-                const chanInput = new TextInputBuilder().setCustomId('interview_chan_id').setLabel('Interview Channel ID').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chanInput));
+                const modal = new ModalBuilder().setCustomId('modal_setup_work').setTitle('Configuration Prise de Service');
+                const input = new TextInputBuilder().setCustomId('work_chan_id').setLabel('ID du salon Prise de Service').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(input));
                 return await interaction.showModal(modal);
             }
         }
 
+        // --- BOUTONS DU STAFF PANEL ---
         if (interaction.isButton()) {
-            if (interaction.customId === 'start_work_btn') {
-                const userId = interaction.user.id;
-                if (!db.workers[userId]) db.workers[userId] = { score: 0 };
-                db.workers[userId].score += 1;
-                saveDB();
-                return await interaction.reply({ content: `✅ Duty started! Total duty sessions: **${db.workers[userId].score}**`, ephemeral: true });
-            }
-
-            if (interaction.customId === 'stop_work_btn') {
-                return await interaction.reply({ content: '🛑 Duty stopped / break recorded.', ephemeral: true });
-            }
-
-            if (interaction.customId === 'setup_app') {
-                const modal = new ModalBuilder().setCustomId('modal_setup_app').setTitle('Application Setup');
-                const chanInput = new TextInputBuilder().setCustomId('app_chan_id').setLabel('Channel ID').setStyle(TextInputStyle.Short).setRequired(true);
-                const countInput = new TextInputBuilder().setCustomId('app_count').setLabel('Questions count').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chanInput), new ActionRowBuilder().addComponents(countInput));
+            if (interaction.customId === 'send_waiting_notif') {
+                const modal = new ModalBuilder().setCustomId('modal_send_waiting_user').setTitle('Notification d\'Attente (Waiting)');
+                const userId = new TextInputBuilder().setCustomId('waiting_user_id').setLabel('ID du membre').setStyle(TextInputStyle.Short).setRequired(true);
+                const reason = new TextInputBuilder().setCustomId('waiting_reason').setLabel('Raison / Motif de l\'attente').setStyle(TextInputStyle.Paragraph).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(userId), new ActionRowBuilder().addComponents(reason));
                 return await interaction.showModal(modal);
-            }
-
-            if (interaction.customId === 'start_application') {
-                await interaction.reply({ content: 'Check your DM to start application!', ephemeral: true });
-                try {
-                    const dmChannel = await interaction.user.createDM();
-                    await dmChannel.send('Welcome to Marsa RP Application. Question 1: What is your previous RP experience?');
-                } catch (e) {
-                    await interaction.followUp({ content: '❌ Cannot send DM, please enable Direct Messages.', ephemeral: true });
-                }
             }
 
             if (interaction.customId === 'open_warn_system') {
-                const modal = new ModalBuilder().setCustomId('modal_apply_warn').setTitle('Penalties System');
-                const userInput = new TextInputBuilder().setCustomId('target_user_id').setLabel('User ID').setStyle(TextInputStyle.Short).setRequired(true);
-                const ruleInput = new TextInputBuilder().setCustomId('rule_violation').setLabel('Rule Violation (e.g. RDM, VDM, META GAMING)').setStyle(TextInputStyle.Short).setRequired(true);
+                const modal = new ModalBuilder().setCustomId('modal_apply_warn').setTitle('Système de Sanctions & Bans');
+                const userInput = new TextInputBuilder().setCustomId('target_user_id').setLabel('ID de l\'utilisateur').setStyle(TextInputStyle.Short).setRequired(true);
+                const ruleInput = new TextInputBuilder().setCustomId('rule_violation').setLabel('Infraction (ex: RDM, VDM, COMBAT LOGGING)').setStyle(TextInputStyle.Short).setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(userInput), new ActionRowBuilder().addComponents(ruleInput));
-                return await interaction.showModal(modal);
-            }
-
-            if (interaction.customId === 'check_player_history') {
-                const modal = new ModalBuilder().setCustomId('modal_check_history').setTitle('Player History');
-                const userInput = new TextInputBuilder().setCustomId('history_user_id').setLabel('User ID').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(userInput));
                 return await interaction.showModal(modal);
             }
         }
 
+        // --- SOUMISSION DE FORMULAIRES (MODALS) ---
         if (interaction.isModalSubmit()) {
-            if (interaction.customId === 'modal_setup_work') {
-                const chanId = interaction.fields.getTextInputValue('work_chan_id');
-                const channel = await client.channels.fetch(chanId).catch(() => null);
-                if (!channel) return await interaction.reply({ content: '❌ Invalid Channel ID!', ephemeral: true });
+            await interaction.deferReply({ ephemeral: true });
 
-                const embed = new EmbedBuilder()
-                    .setTitle('💼 Work & Duty System - Marsa RP')
-                    .setDescription('Click **🟢 Start Duty** to log your work, or **🔴 Stop Duty** for break/finish:')
-                    .setColor(0x3498DB);
+            if (interaction.customId === 'modal_setup_waiting_chan') {
+                const chanId = interaction.fields.getTextInputValue('waiting_chan_id');
+                db.settings.waitingChannel = chanId;
+                saveDB();
+                return await interaction.editReply({ content: `✅ Salon d'attente configuré avec succès ! (ID : ${chanId})` });
+            }
 
-                const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('start_work_btn').setLabel('🟢 Start Duty').setStyle(ButtonStyle.Success),
-                    new ButtonBuilder().setCustomId('stop_work_btn').setLabel('🔴 Stop Duty').setStyle(ButtonStyle.Danger)
-                );
+            if (interaction.customId === 'modal_send_waiting_user') {
+                const userId = interaction.fields.getTextInputValue('waiting_user_id');
+                const reason = interaction.fields.getTextInputValue('waiting_reason');
 
-                await channel.send({ embeds: [embed], components: [row] });
-                return await interaction.reply({ content: '✅ Work buttons posted successfully!', ephemeral: true });
+                const targetUser = await client.users.fetch(userId).catch(() => null);
+                if (!targetUser) return await interaction.editReply({ content: '❌ Utilisateur introuvable.' });
+
+                const waitingEmbed = new EmbedBuilder()
+                    .setTitle('⏳ Notification d\'Attente (Waiting Room)')
+                    .setDescription(`Bonjour <@${userId}>,\n\nVous êtes attendu dans le salon d'attente / support pour la raison suivante :\n🔹 **Raison :** ${reason}`)
+                    .setColor(0xF1C40F)
+                    .setTimestamp();
+
+                // Notification en message privé (MP)
+                await targetUser.send({ embeds: [waitingEmbed] }).catch(() => {});
+
+                // Notification dans le salon configuré
+                if (db.settings.waitingChannel) {
+                    const channel = await client.channels.fetch(db.settings.waitingChannel).catch(() => null);
+                    if (channel) {
+                        await channel.send({ content: `<@${userId}>`, embeds: [waitingEmbed] });
+                    }
+                }
+
+                return await interaction.editReply({ content: `✅ Notification d'attente envoyée avec succès à <@${userId}> !` });
             }
 
             if (interaction.customId === 'modal_apply_warn') {
@@ -288,37 +278,48 @@ client.on('interactionCreate', async (interaction) => {
                 const count = db.warns[userId][rule];
                 saveDB();
 
-                let penaltyText = "General warning / action";
+                let penaltyText = "Avertissement / Action administrative";
                 if (penaltiesTable[rule]) {
                     const offenseLevel = count > 3 ? 3 : count;
                     penaltyText = penaltiesTable[rule][offenseLevel];
                 }
 
-                return await interaction.reply({
-                    content: `✅ Violation logged for <@${userId}>.\n📌 **Violation:** ${rule}\n🔄 **Offense Count:** #${count}\n⚖️ **Applied Penalty:** **${penaltyText}**`,
-                    ephemeral: true
-                });
+                const banEmbed = new EmbedBuilder()
+                    .setTitle('🚨 Notification de Sanction / Ban')
+                    .setDescription(`Une sanction a été appliquée au membre <@${userId}> :\n\n📌 **Règle enfreinte :** ${rule}\n🔄 **Récidive :** N°${count}\n⚖️ **Sanction :** **${penaltyText}**`)
+                    .setColor(0xE74C3C)
+                    .setTimestamp();
+
+                // Envoi en MP au membre sanctionné
+                const targetUser = await client.users.fetch(userId).catch(() => null);
+                if (targetUser) {
+                    await targetUser.send({ embeds: [banEmbed] }).catch(() => {});
+                }
+
+                return await interaction.editReply({ embeds: [banEmbed], content: '✅ Sanction enregistrée et notification envoyée !' });
             }
 
-            if (interaction.customId === 'modal_check_history') {
-                const userId = interaction.fields.getTextInputValue('history_user_id');
-                const userWarns = db.warns[userId];
+            if (interaction.customId === 'modal_submit_dev_app') {
+                const exp = interaction.fields.getTextInputValue('dev_exp');
+                const projects = interaction.fields.getTextInputValue('dev_projects');
 
-                if (!userWarns || Object.keys(userWarns).length === 0) {
-                    return await interaction.reply({ content: `✅ Player <@${userId}> has a clean record.`, ephemeral: true });
-                }
+                return await interaction.editReply({ content: `✅ Votre candidature **Développeur (Dev App)** a bien été reçue !\n\n**Compétences :** ${exp}\n**Projets :** ${projects}` });
+            }
 
-                let report = `📋 **Violation History for <@${userId}>:**\n`;
-                for (const [rule, count] of Object.entries(userWarns)) {
-                    report += `- **${rule}**: Offense count: ${count}\n`;
-                }
+            if (interaction.customId === 'modal_submit_staff_app') {
+                const age = interaction.fields.getTextInputValue('staff_age');
+                const exp = interaction.fields.getTextInputValue('staff_exp');
 
-                return await interaction.reply({ content: report, ephemeral: true });
+                return await interaction.editReply({ content: `✅ Votre candidature **Staff / RP** a bien été reçue !\n\n**Âge :** ${age}\n**Expérience :** ${exp}` });
             }
         }
     } catch (err) {
-        console.error("Execution error:", err);
+        console.error("Erreur interaction :", err);
     }
+});
+
+process.on('unhandledRejection', error => {
+    console.error('Erreur non gérée :', error);
 });
 
 client.login(BOT_TOKEN);
