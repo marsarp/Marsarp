@@ -18,11 +18,9 @@ const {
 const fs = require('fs');
 
 // ==================== [ Data Configuration ] ====================
-require('dotenv').config();
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = '1560278126242562149';
 const GUILD_ID  = '1559798237743808535';
-
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
