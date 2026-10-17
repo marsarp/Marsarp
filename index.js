@@ -44,7 +44,6 @@ let db = {
     warns: {}, 
     work: {}, 
     activeWork: {}, 
-    ticketQuestions: {}, 
     userSessions: {} 
 };
 
@@ -52,10 +51,9 @@ if (fs.existsSync(DB_FILE)) {
     try {
         db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
         if (!db.settings) db.settings = { lang: 'ar', waitingInterview: {}, waitingHelp: {}, tickets: {} };
+        if (!db.warns) db.warns = {};
         if (!db.work) db.work = {};
         if (!db.activeWork) db.activeWork = {};
-        if (!db.warns) db.warns = {};
-        if (!db.ticketQuestions) db.ticketQuestions = {};
         if (!db.userSessions) db.userSessions = {};
     } catch (e) {
         console.log("إعادة تهيئة قاعدة البيانات المحلية...");
@@ -70,7 +68,6 @@ function saveDB() {
     }
 }
 
-// دالة تحويل الثواني إلى ساعات ودقائق وثواني
 function formatTime(seconds) {
     const hrs = Math.floor(seconds / 3600);
     const mins = Math.floor((seconds % 3600) / 60);
@@ -78,12 +75,25 @@ function formatTime(seconds) {
     return `${hrs}h ${mins}m ${secs}s`;
 }
 
+// تغيير اسم أي عضو يدخل تلقائياً إلى mars/
+client.on('guildMemberAdd', async (member) => {
+    try {
+        if (!member.displayName.startsWith('mars/')) {
+            const newNick = `mars/ ${member.displayName}`;
+            await member.setNickname(newNick);
+        }
+    } catch (e) {
+        console.log(`تعذر تغيير اسم العضو ${member.user.tag}`);
+    }
+});
+
 client.once('ready', async () => {
     console.log(`✅ البوت أونلاين ومستعد باسم: ${client.user.tag}`);
 
     const commands = [
         new SlashCommandBuilder().setName('panel').setDescription('لوحة التحكم الرئيسية للإدارة العليا (Marsa RP)'),
-        new SlashCommandBuilder().setName('staffpanel').setDescription('لوحة فريق الدعم والستاف (Marsa RP)')
+        new SlashCommandBuilder().setName('staffpanel').setDescription('لوحة فريق الدعم والستاف (Marsa RP)'),
+        new SlashCommandBuilder().setName('fixnames').setDescription('تغيير أسماء جميع الأعضاء الموجودين إلى mars/ Nickname')
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -97,7 +107,7 @@ client.once('ready', async () => {
         console.error('خطأ تسجيل الأوامر:', error.message);
     }
 
-    // فحص دوري للتقارير الأسبوعية والشهرية للدوام
+    // فحص تقارير الدوام الأسبوعية والشهرية
     setInterval(checkDutySchedules, 60000); 
 });
 
@@ -107,7 +117,7 @@ function checkDutySchedules() {
     if (now.getDay() === 5 && now.getHours() === 23 && now.getMinutes() === 59) {
         sendDutyReport('weekly');
     }
-    // تقرير شهري في آخر يوم بالشهر
+    // تقرير شهري نهاية الشهر
     const isLastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() === now.getDate();
     if (isLastDay && now.getHours() === 23 && now.getMinutes() === 59) {
         sendDutyReport('monthly');
@@ -123,14 +133,14 @@ async function sendDutyReport(type) {
         .sort((a, b) => b[1].totalSeconds - a[1].totalSeconds)
         .slice(0, 10);
 
-    let title = type === 'weekly' ? '📊 التقرير الأسبوعي لدوام الأعضاء (Weekly Top Duty)' : '📅 التقرير الشهري الإجمالي للدوام (Monthly Top Duty)';
-    let desc = `إليك أكثر الأعضاء عملاً ونشاطاً خلال هذه الفترة:\n\n`;
+    let title = type === 'weekly' ? '📊 التقرير الأسبوعي لدوام الأعضاء (Weekly Duty Top)' : '📅 التقرير الشهري الإجمالي للدوام (Monthly Duty Top)';
+    let desc = `أكثر الأعضاء نشاطاً وعملاً خلال هذه الفترة:\n\n`;
 
     if (sorted.length === 0) {
         desc += 'لا توجد بيانات دوام مسجلة.';
     } else {
         sorted.forEach(([userId, data], index) => {
-            desc += `**#${index + 1}** <@${userId}> ➔ الوقت الإجمالي: **${formatTime(data.totalSeconds)}** (${data.sessions || 0} مرات)\n`;
+            desc += `**#${index + 1}** <@${userId}> ➔ الوقت الإجمالي: **${formatTime(data.totalSeconds)}** (${data.sessions || 0} جلسة)\n`;
         });
     }
 
@@ -141,6 +151,28 @@ async function sendDutyReport(type) {
 client.on('interactionCreate', async (interaction) => {
     try {
         if (interaction.isChatInputCommand()) {
+            if (interaction.commandName === 'fixnames') {
+                if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                    return interaction.reply({ content: '❌ هذا الأمر مخصص للإدارة العليا فقط!', ephemeral: true });
+                }
+
+                await interaction.deferReply({ ephemeral: true });
+                const members = await interaction.guild.members.fetch();
+                let changedCount = 0;
+
+                for (const [id, member] of members) {
+                    if (member.user.bot) continue;
+                    if (!member.displayName.startsWith('mars/')) {
+                        try {
+                            await member.setNickname(`mars/ ${member.displayName}`);
+                            changedCount++;
+                        } catch (e) {}
+                    }
+                }
+
+                return await interaction.editReply({ content: `⚙️ تم تحديث أسماء **${changedCount}** عضو بنجاح!` });
+            }
+
             if (interaction.commandName === 'panel') {
                 if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
                     return interaction.reply({ content: '❌ مخصص للإدارة العليا فقط!', ephemeral: true });
@@ -155,15 +187,14 @@ client.on('interactionCreate', async (interaction) => {
                     .setCustomId('admin_main_menu')
                     .setPlaceholder('... اختر خيار الإعداد والتحكم')
                     .addOptions([
-                        { label: 'إعداد Waiting for Interview', description: 'تحديد القناة، الرتبة المنشن وقناة النقل الصوتي', value: 'opt_setup_w_interview', emoji: '🎙️' },
+                        { label: 'إعداد Waiting for Interview', description: 'تحديد القناة، ورتبة المنشن', value: 'opt_setup_w_interview', emoji: '🎙️' },
                         { label: 'إعداد Waiting for Help', description: 'تحديد قناة المساعدة ورتبة الدعم', value: 'opt_setup_w_help', emoji: '❓' },
                         { label: 'إعداد نظام التذاكر (Ticket Setup)', description: 'إنشاء تكت Dev App, Staff, Interview وتحديد الأسئلة', value: 'opt_setup_tickets', emoji: '🎫' },
                         { label: 'إعداد نظام تسجيل الدوام والوقت', description: 'نشر زر بدء الوقت والتقارير الأسبوعية/الشهري', value: 'opt_setup_work_timer', emoji: '⏱️' },
                         { label: 'تغيير لغة البوت (Language)', description: 'التبديل بين العربية والإنجليزية', value: 'opt_change_lang', emoji: '🌐' }
                     ]);
 
-                const rowMenu = new ActionRowBuilder().addComponents(menu);
-                return await interaction.reply({ embeds: [embed], components: [rowMenu], ephemeral: true });
+                return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
             }
 
             if (interaction.commandName === 'staffpanel') {
@@ -173,19 +204,18 @@ client.on('interactionCreate', async (interaction) => {
 
                 const embed = new EmbedBuilder()
                     .setTitle('🛡️ لوحة طاقم الدعم (Staff Panel)')
-                    .setDescription('إدارة العقوبات والتحذيرات والانتظار:')
+                    .setDescription('إدارة التنبيهات والسجلات:')
                     .setColor(0xFF0000);
 
                 const row = new ActionRowBuilder().addComponents(
-                    new ButtonBuilder().setCustomId('btn_notify_waiting').setLabel('إرسال إشعار انتظار (Waiting Notif)').setStyle(ButtonStyle.Warning),
-                    new ButtonBuilder().setCustomId('btn_open_warn').setLabel('إعطاء عقوبة / بان (Warn/Ban)').setStyle(ButtonStyle.Danger)
+                    new ButtonBuilder().setCustomId('btn_open_warn').setLabel('⚠️ تسجيل عقوبة / ورن').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId('btn_check_history').setLabel('🔍 فحص سجل العضو').setStyle(ButtonStyle.Primary)
                 );
 
                 return await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
             }
         }
 
-        // --- معالجة القائمة الرئيسية للإدارة ---
         if (interaction.isStringSelectMenu() && interaction.customId === 'admin_main_menu') {
             const val = interaction.values[0];
 
@@ -193,8 +223,7 @@ client.on('interactionCreate', async (interaction) => {
                 const modal = new ModalBuilder().setCustomId('modal_w_interview').setTitle('إعداد Waiting for Interview');
                 const chan = new TextInputBuilder().setCustomId('w_int_chan').setLabel('آيدي القناة (Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
                 const role = new TextInputBuilder().setCustomId('w_int_role').setLabel('آيدي الرتبة للتنبيه (Role ID)').setStyle(TextInputStyle.Short).setRequired(true);
-                const moveVoice = new TextInputBuilder().setCustomId('w_int_voice').setLabel('آيدي الروم الصوتي للنقل (Voice ID)').setStyle(TextInputStyle.Short).setRequired(false);
-                modal.addComponents(new ActionRowBuilder().addComponents(chan), new ActionRowBuilder().addComponents(role), new ActionRowBuilder().addComponents(moveVoice));
+                modal.addComponents(new ActionRowBuilder().addComponents(chan), new ActionRowBuilder().addComponents(role));
                 return await interaction.showModal(modal);
             }
 
@@ -230,9 +259,7 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
 
-        // --- معالجة الأزرار العامة ---
         if (interaction.isButton()) {
-            // زر بدء وقت العمل
             if (interaction.customId === 'btn_start_work') {
                 const uid = interaction.user.id;
                 if (db.activeWork[uid]) {
@@ -243,7 +270,6 @@ client.on('interactionCreate', async (interaction) => {
                 return await interaction.reply({ content: '🟢 **تم بدء احتساب الوقت بنجاح!** بدأ عداد الساعات الآن.', ephemeral: true });
             }
 
-            // زر إيقاف وقت العمل
             if (interaction.customId === 'btn_stop_work') {
                 const uid = interaction.user.id;
                 if (!db.activeWork[uid]) {
@@ -265,7 +291,6 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
 
-            // زر فتح قائمة اختيار التذكرة
             if (interaction.customId === 'btn_open_ticket_menu') {
                 const embed = new EmbedBuilder()
                     .setTitle('🎫 اختر قسم التذكرة التي ترغب بفتحها')
@@ -285,11 +310,9 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
 
-        // --- اختيار نوع التذكرة وبدء الأسئلة بالخاص ---
         if (interaction.isStringSelectMenu() && interaction.customId === 'select_ticket_type') {
             const ticketType = interaction.values[0];
             const uid = interaction.user.id;
-
             const questions = db.settings.tickets?.questions || ["ما هو اسمك وعمرك؟", "ما هي خبرتك السابقة في الرول بلاي؟"];
 
             db.userSessions[uid] = {
@@ -304,35 +327,31 @@ client.on('interactionCreate', async (interaction) => {
 
             try {
                 const dm = await interaction.user.createDM();
-                await dm.send(`مرحباً بك! لقد اخترت تذكرة **${ticketType.toUpperCase()}**.\n\n❓ **السؤال الأول (${1}/${questions.length}):** ${questions[0]}`);
+                await dm.send(`مرحباً بك! لقد اخترت تذكرة **${ticketType.toUpperCase()}**.\n\n❓ **السؤال الأول (1/${questions.length}):** ${questions[0]}`);
             } catch (e) {
-                await interaction.followUp({ content: '❌ تعذر إرسال رسالة لك بالخاص، يرجى فتح الرسائل الخاصة في إعدادات الأمان.', ephemeral: true });
+                await interaction.followUp({ content: '❌ تعذر إرسال رسالة لك بالخاص، يرجى فتح الرسائل الخاصة.', ephemeral: true });
             }
         }
 
-        // --- معالجة استمارات النماذج (Modals) ---
         if (interaction.isModalSubmit()) {
             await interaction.deferReply({ ephemeral: true });
 
             if (interaction.customId === 'modal_w_interview') {
-                const chanId = interaction.fields.getTextInputValue('w_int_chan');
-                const roleId = interaction.fields.getTextInputValue('w_int_role');
-                const voiceId = interaction.fields.getTextInputValue('w_int_voice') || '';
-
-                db.settings.waitingInterview = { chanId, roleId, voiceId };
+                db.settings.waitingInterview = {
+                    chanId: interaction.fields.getTextInputValue('w_int_chan'),
+                    roleId: interaction.fields.getTextInputValue('w_int_role')
+                };
                 saveDB();
-
-                return await interaction.editReply({ content: `✅ **تم ضبط Waiting for Interview بنجاح!**\n📺 القناة: <#${chanId}>\n🔔 الرتبة المنبهة: <@&${roleId}>` });
+                return await interaction.editReply({ content: '✅ تم ضبط إعدادات Waiting for Interview بنجاح!' });
             }
 
             if (interaction.customId === 'modal_w_help') {
-                const chanId = interaction.fields.getTextInputValue('w_help_chan');
-                const roleId = interaction.fields.getTextInputValue('w_help_role');
-
-                db.settings.waitingHelp = { chanId, roleId };
+                db.settings.waitingHelp = {
+                    chanId: interaction.fields.getTextInputValue('w_help_chan'),
+                    roleId: interaction.fields.getTextInputValue('w_help_role')
+                };
                 saveDB();
-
-                return await interaction.editReply({ content: `✅ **تم ضبط Waiting for Help بنجاح!**\n📺 القناة: <#${chanId}>\n🔔 الرتبة: <@&${roleId}>` });
+                return await interaction.editReply({ content: '✅ تم ضبط إعدادات Waiting for Help بنجاح!' });
             }
 
             if (interaction.customId === 'modal_ticket_setup') {
@@ -343,12 +362,7 @@ client.on('interactionCreate', async (interaction) => {
 
                 const questionsArr = rawQuestions.split(',').map(q => q.trim()).filter(q => q.length > 0);
 
-                db.settings.tickets = {
-                    postChanId,
-                    recvChanId,
-                    roleId,
-                    questions: questionsArr
-                };
+                db.settings.tickets = { postChanId, recvChanId, roleId, questions: questionsArr };
                 saveDB();
 
                 const postChannel = await client.channels.fetch(postChanId).catch(() => null);
@@ -358,11 +372,11 @@ client.on('interactionCreate', async (interaction) => {
                         .setDescription('اضغط على الزر بالأسفل لاختيار نوع التذكرة والبدء بالإجابة على الأسئلة في الخاص:')
                         .setColor(0x00FF7F);
 
-                    const btn = new ButtonBuilder().setCustomId('btn_open_ticket_menu').setLabel('📩 فتح تذكرة جديد').setStyle(ButtonStyle.Primary);
+                    const btn = new ButtonBuilder().setCustomId('btn_open_ticket_menu').setLabel('📩 فتح تذكرة جديدة').setStyle(ButtonStyle.Primary);
                     await postChannel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] });
                 }
 
-                return await interaction.editReply({ content: `✅ **تم نشر نظام التذاكر بنجاح!**\n📺 قناة التذاكر: <#${postChanId}>\n📥 قناة استقبال الإجابات: <#${recvChanId}>\n❓ عدد الأسئلة: ${questionsArr.length}` });
+                return await interaction.editReply({ content: '✅ تم نشر نظام التذاكر بنجاح في القناة المحددة!' });
             }
 
             if (interaction.customId === 'modal_setup_work_chan') {
@@ -385,7 +399,7 @@ client.on('interactionCreate', async (interaction) => {
                     await channel.send({ embeds: [embed], components: [row] });
                 }
 
-                return await interaction.editReply({ content: '✅ تم نشر زر تسجيل وتوقيت الدوام بنجاح في القناة المحددة!' });
+                return await interaction.editReply({ content: '✅ تم نشر زر تسجيل الدوام وحساب الساعات بنجاح!' });
             }
         }
     } catch (err) {
@@ -393,7 +407,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// --- استقبال ردود الأسئلة بالخاص (DM Collector) ---
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.channel.isDMBased()) return;
 
@@ -439,8 +452,6 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-process.on('unhandledRejection', error => {
-    console.error('استثناء غير معالج:', error);
-});
+process.on('unhandledRejection', error => console.error('استثناء غير معالج:', error));
 
 client.login(BOT_TOKEN);
