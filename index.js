@@ -22,7 +22,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = '1560278126242562149';
 const GUILD_ID  = '1536367054586642512';
 
-// 👑 إضافة الـ ID الخاص بك كـ Super Admin يتجاوز كافة صلاحيات ديسكورد
+// 👑 الـ ID الخاص بك كـ Super Admin
 const SUPER_ADMIN_ID = '1525233760058998884';
 
 if (!BOT_TOKEN) {
@@ -51,6 +51,8 @@ let db = {
         serverTag: '',
         warnChannel: '',
         banChannel: '',
+        logChannel: '',
+        welcomeChannel: '',
         wInterview: {}, 
         wHelp: {} 
     }, 
@@ -77,13 +79,12 @@ function saveDB() {
     }
 }
 
-// دالة التحقق من الصلاحية العليا (Super Admin أو Admin)
 function hasAdminPermission(interaction) {
     if (interaction.user.id === SUPER_ADMIN_ID) return true;
     return interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 }
 
-// 🛑 طرد البوتات الغريبة + التسمية التلقائية بالنيكنيم
+// 🛑 طرد البوتات الغريبة + التسمية التلقائية + الترحيب + لوج الدخول
 client.on('guildMemberAdd', async (member) => {
     try {
         if (member.user.bot && member.id !== CLIENT_ID) {
@@ -91,13 +92,75 @@ client.on('guildMemberAdd', async (member) => {
             return;
         }
 
+        // التسمية التلقائية
         const tag = db.settings.prefixTag || 'mars/';
         if (!member.displayName.startsWith(tag)) {
             const newNick = `${tag} ${member.displayName}`;
             await member.setNickname(newNick);
         }
+
+        // إرسال الترحيب في قناة الترحيب
+        if (db.settings.welcomeChannel) {
+            const welcomeChan = await client.channels.fetch(db.settings.welcomeChannel).catch(() => null);
+            if (welcomeChan) {
+                const welcomeEmbed = new EmbedBuilder()
+                    .setTitle(`👋 Welcome to ${member.guild.name}!`)
+                    .setDescription(`Welcome <@${member.id}> to our server! We are glad to have you with us.\nMake sure to read the rules and enjoy your time!`)
+                    .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+                    .setImage(member.guild.iconURL({ dynamic: true }))
+                    .setColor(0x00FF7F)
+                    .setTimestamp();
+
+                await welcomeChan.send({ content: `Welcome <@${member.id}>!`, embeds: [welcomeEmbed] });
+            }
+        }
+
+        // اللوج عند دخول عضو
+        sendLog('📥 Member Joined', `User: ${member.user.tag} (<@${member.id}>) joined the server.`, 0x2ECC71);
+
     } catch (e) {
-        console.log(`تعذر تغيير اسم العضو: ${member.user.tag}`);
+        console.log(`تعذر معالجة انضمام العضو: ${member.user.tag}`);
+    }
+});
+
+// 📊 نظام اللوجات الذكي (All-In-One Logs)
+async function sendLog(title, description, color = 0x3498DB) {
+    if (!db.settings.logChannel) return;
+    const logChan = await client.channels.fetch(db.settings.logChannel).catch(() => null);
+    if (!logChan) return;
+
+    const embed = new EmbedBuilder()
+        .setTitle(`📜 [LOG] ${title}`)
+        .setDescription(description)
+        .setColor(color)
+        .setTimestamp();
+
+    await logChan.send({ embeds: [embed] }).catch(() => {});
+}
+
+// 📝 لوج حذف الرسائل
+client.on('messageDelete', async (message) => {
+    if (!message.guild || message.author?.bot) return;
+    sendLog('🗑️ Message Deleted', `**Author:** ${message.author.tag} (<@${message.author.id}>)\n**Channel:** <#${message.channel.id}>\n**Content:**\n${message.content || 'None (Image or Embed)'}`, 0xE74C3C);
+});
+
+// ✏️ لوج تعديل الرسائل
+client.on('messageUpdate', async (oldMessage, newMessage) => {
+    if (!oldMessage.guild || oldMessage.author?.bot || oldMessage.content === newMessage.content) return;
+    sendLog('✏️ Message Edited', `**Author:** ${oldMessage.author.tag} (<@${oldMessage.author.id}>)\n**Channel:** <#${oldMessage.channel.id}>\n**Before:** ${oldMessage.content}\n**After:** ${newMessage.content}`, 0xF1C40F);
+});
+
+// 🎙️ لوج الرومات الصوتية
+client.on('voiceStateUpdate', async (oldState, newState) => {
+    const member = newState.member || oldState.member;
+    if (!member || member.user.bot) return;
+
+    if (!oldState.channelId && newState.channelId) {
+        sendLog('🎙️ Voice Join', `User: ${member.user.tag} (<@${member.id}>) joined voice channel <#${newState.channelId}>.`, 0x2ECC71);
+    } else if (oldState.channelId && !newState.channelId) {
+        sendLog('🎙️ Voice Leave', `User: ${member.user.tag} (<@${member.id}>) left voice channel <#${oldState.channelId}>.`, 0xE74C3C);
+    } else if (oldState.channelId !== newState.channelId) {
+        sendLog('🎙️ Voice Switch', `User: ${member.user.tag} (<@${member.id}>) moved from <#${oldState.channelId}> to <#${newState.channelId}>.`, 0x3498DB);
     }
 });
 
@@ -177,14 +240,15 @@ client.on('interactionCreate', async (interaction) => {
                     .setPlaceholder('... اختر الخيار المطلوب لإعداده')
                     .addOptions([
                         { label: 'إعداد نظام التقديمات (Applications)', description: 'Dev, Staff, Interview Apps والأسئلة وقناة الإجابات', value: 'opt_setup_apps', emoji: '📝' },
+                        { label: 'إعداد قناة اللوج الشامل (Logs System)', description: 'تحديد القناة لمراقبة جميع تحركات وحذف الرسائل', value: 'opt_setup_logs', emoji: '📊' },
+                        { label: 'إعداد نظام الترحيب (Welcome Channel)', description: 'تحديد روم الترحيب وصورة البروفايل والسيرفر', value: 'opt_setup_welcome', emoji: '👋' },
                         { label: 'إعداد قنوات العقوبات (Warn & Ban Channels)', description: 'تحديد آيدي روم الورنات وآيدي روم البان', value: 'opt_setup_sanction_chans', emoji: '🚨' },
                         { label: 'إعداد إشعارات المقابلات (Interview Notification)', description: 'تحديد روم التنبيه والتاغ وروم النقل', value: 'opt_setup_w_interview', emoji: '🎙️' },
                         { label: 'إعداد إشعارات المساعدة (Waiting Help)', description: 'تحديد روم المساعدة وتاغ الستاف', value: 'opt_setup_w_help', emoji: '❓' },
                         { label: 'تفعيل إكتيف صوتي 24/7 (Voice Channel)', description: 'دخول البوت لروم صوتي دائماً', value: 'opt_setup_voice_247', emoji: '🔊' },
                         { label: 'إرسال إشعار للجميع بالخاص (Broadcast DM)', description: 'إرسال رسالة جماعية لكل أعضاء السيرفر بالخاص', value: 'opt_setup_broadcast', emoji: '📢' },
                         { label: 'إعدادات اسم وصورة البوت (Bot Profile)', description: 'تغيير اسم البوت، زخرفته ورابط صورته', value: 'opt_setup_bot_profile', emoji: '🖼️' },
-                        { label: 'تعديل التسمية التلقائية (Auto-Nickname)', description: 'تغيير البادئة التلقائية للأسماء (النيكنيم)', value: 'opt_setup_nickname_tag', emoji: '🏷️' },
-                        { label: 'تحديد تاغ السيرفر (Server Tag)', description: 'تحديد وتغيير التاغ الرسمي للسيرفر', value: 'opt_setup_server_tag', emoji: '👑' }
+                        { label: 'تعديل التسمية التلقائية (Auto-Nickname)', description: 'تغيير البادئة التلقائية للأسماء (النيكنيم)', value: 'opt_setup_nickname_tag', emoji: '🏷️' }
                     ]);
 
                 return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
@@ -209,6 +273,20 @@ client.on('interactionCreate', async (interaction) => {
         // القائمة الرئيسية في البانل
         if (interaction.isStringSelectMenu() && interaction.customId === 'admin_main_menu') {
             const val = interaction.values[0];
+
+            if (val === 'opt_setup_logs') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_logs').setTitle('إعداد قناة اللوجات العامة');
+                const logChan = new TextInputBuilder().setCustomId('log_chan_id').setLabel('آيدي قناة اللوجات (Logs Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(logChan));
+                return await interaction.showModal(modal);
+            }
+
+            if (val === 'opt_setup_welcome') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_welcome').setTitle('إعداد قناة الترحيب');
+                const welChan = new TextInputBuilder().setCustomId('wel_chan_id').setLabel('آيدي قناة الترحيب (Welcome Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(welChan));
+                return await interaction.showModal(modal);
+            }
 
             if (val === 'opt_setup_sanction_chans') {
                 const modal = new ModalBuilder().setCustomId('modal_setup_sanction_chans').setTitle('إعداد قنوات العقوبات');
@@ -281,13 +359,6 @@ client.on('interactionCreate', async (interaction) => {
                 const modal = new ModalBuilder().setCustomId('modal_setup_nick_tag').setTitle('إعداد التسمية التلقائية (Nickname Tag)');
                 const tag = new TextInputBuilder().setCustomId('nick_tag').setLabel('البادئة التلقائية (مثال: mars/)').setStyle(TextInputStyle.Short).setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(tag));
-                return await interaction.showModal(modal);
-            }
-
-            if (val === 'opt_setup_server_tag') {
-                const modal = new ModalBuilder().setCustomId('modal_setup_server_tag').setTitle('تحديد تاغ السيرفر الرسمي');
-                const sTag = new TextInputBuilder().setCustomId('server_tag').setLabel('اكتب التاغ الخاص بالسيرفر').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(sTag));
                 return await interaction.showModal(modal);
             }
         }
@@ -373,6 +444,18 @@ client.on('interactionCreate', async (interaction) => {
 
         if (interaction.isModalSubmit()) {
             await interaction.deferReply({ ephemeral: true });
+
+            if (interaction.customId === 'modal_setup_logs') {
+                db.settings.logChannel = interaction.fields.getTextInputValue('log_chan_id');
+                saveDB();
+                return await interaction.editReply({ content: '✅ تم ضبط وتفعيل قناة اللوج الشامل بنجاح!' });
+            }
+
+            if (interaction.customId === 'modal_setup_welcome') {
+                db.settings.welcomeChannel = interaction.fields.getTextInputValue('wel_chan_id');
+                saveDB();
+                return await interaction.editReply({ content: '✅ تم ضبط وتفعيل قناة الترحيب بنجاح!' });
+            }
 
             if (interaction.customId === 'modal_setup_sanction_chans') {
                 db.settings.warnChannel = interaction.fields.getTextInputValue('warn_chan_id');
@@ -501,32 +584,300 @@ client.on('messageCreate', async (message) => {
             await message.reply(`❓ **السؤال (${session.currentStep + 1}/${session.questions.length}):** ${nextQ}`);
             saveDB();
         } else {
-            await message.reply('🎉 **تم استلام جميع إجاباتك بنجاح!** تم إرسال تقديمك للمراجعة.');
+            await message.reply('🎉 **تم استلام جميع إجاباتك بنجاح!** تمممتاز جداً يا أمين! هذه إضافة في غاية الأهمية لتكتمل جميع خواص البوت:
 
-            if (session.recvChanId) {
-                const targetChan = await client.channels.fetch(session.recvChanId).catch(() => null);
-                if (targetChan) {
-                    let desc = `👤 **صاحب التقديم:** <@${uid}>\n📋 **نوع التقديم:** \`${session.type.replace('app_', '').toUpperCase()}\`\n\n`;
-                    session.questions.forEach((q, idx) => {
-                        desc += `**س${idx + 1}: ${q}**\nج: ${session.answers[idx]}\n\n`;
-                    });
+1. **نظام اللوجز الشامل (Complete Logs System):** يتبع ويُسجل أي حدث أو حركة في السيرفر (حذف الرسائل، تعديل الرسائل، دخول/خروج الأعضاء، تغيير الأسماء، إنشاء الرومات أو الرتب).
+2. **نظام الترحيب الاحترافي (Welcome System):** يرسل رسالة ترحب بالعضو الجديد باللغة الإنجليزية مع بطاقة احترافية تتضمن صورة حساب العضو (Avatar) وصورة السيرفر واسمه.
 
-                    const embed = new EmbedBuilder()
-                        .setTitle(`📥 طلب تقديم جديد - ${session.type.replace('app_', '').toUpperCase()}`)
-                        .setDescription(desc)
-                        .setColor(0x9B59B6)
-                        .setTimestamp();
+---
 
-                    await targetChan.send({ embeds: [embed] });
-                }
-            }
+### 💻 الكود الشامل والنهائي لملف `index.js`:
 
-            delete db.userSessions[uid];
-            saveDB();
+```javascript
+const { 
+    Client, 
+    GatewayIntentBits, 
+    Partials, 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle, 
+    PermissionFlagsBits,
+    REST,
+    Routes,
+    SlashCommandBuilder,
+    StringSelectMenuBuilder
+} = require('discord.js');
+const { joinVoiceChannel } = require('@discordjs/voice');
+const fs = require('fs');
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const CLIENT_ID = '1560278126242562149';
+const GUILD_ID  = '1536367054586642512';
+
+// 👑 حسابك كـ Super Admin يتجاوز صلاحيات ديسكورد
+const SUPER_ADMIN_ID = '1525233760058998884';
+
+if (!BOT_TOKEN) {
+    console.error("❌ BOT_TOKEN غير موجود في متغيرات البيئة!");
+    process.exit(1);
+}
+
+const client = new Client({
+    intents: [
+        GatewayIntentBits.Guilds,
+        GatewayIntentBits.GuildMessages,
+        GatewayIntentBits.GuildMembers,
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.DirectMessages,
+        GatewayIntentBits.GuildVoiceStates
+    ],
+    partials: [Partials.Channel, Partials.Message, Partials.User]
+});
+
+const DB_FILE = './database.json';
+let db = { 
+    settings: { 
+        apps: {}, 
+        voice247: '', 
+        prefixTag: 'mars/', 
+        serverTag: '',
+        warnChannel: '',
+        banChannel: '',
+        logsChannel: '',
+        welcomeChannel: '',
+        wInterview: {}, 
+        wHelp: {} 
+    }, 
+    warns: {}, 
+    userSessions: {} 
+};
+
+if (fs.existsSync(DB_FILE)) {
+    try {
+        db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
+        if (!db.settings) db.settings = {};
+        if (!db.settings.apps) db.settings.apps = {};
+        if (!db.userSessions) db.userSessions = {};
+    } catch (e) {
+        console.log("إعادة تهيئة قاعدة البيانات المحلية...");
+    }
+}
+
+function saveDB() {
+    try {
+        fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2));
+    } catch (err) {
+        console.error("خطأ أثناء حفظ قاعدة البيانات:", err);
+    }
+}
+
+function hasAdminPermission(interaction) {
+    if (interaction.user.id === SUPER_ADMIN_ID) return true;
+    return interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+}
+
+// دالة إرسال السجلات (Logs)
+async function sendLog(guild, embed) {
+    if (!db.settings.logsChannel) return;
+    const logChan = await guild.channels.fetch(db.settings.logsChannel).catch(() => null);
+    if (logChan) {
+        await logChan.send({ embeds: [embed] }).catch(() => {});
+    }
+}
+
+// 🛑 طرد البوتات الغريبة + الترحيب بالأعضاء واللوجز والتسمية التلقائية
+client.on('guildMemberAdd', async (member) => {
+    try {
+        // حماية طرد البوتات الغريبة
+        if (member.user.bot && member.id !== CLIENT_ID) {
+            await member.kick('حماية السيرفر: غير مسموح بإدخال بوتات خارجية.');
+            return;
         }
+
+        // 1. التسمية التلقائية
+        const tag = db.settings.prefixTag || 'mars/';
+        if (!member.displayName.startsWith(tag)) {
+            const newNick = `${tag} ${member.displayName}`;
+            await member.setNickname(newNick);
+        }
+
+        // 2. إرسال بطاقة الترحيب (Welcome Message)
+        if (db.settings.welcomeChannel) {
+            const welcomeChan = await member.guild.channels.fetch(db.settings.welcomeChannel).catch(() => null);
+            if (welcomeChan) {
+                const welcomeEmbed = new EmbedBuilder()
+                    .setTitle(`🎉 Welcome to ${member.guild.name}!`)
+                    .setDescription(`Welcome <@${member.id}> to our server! We are thrilled to have you here.\n\nPlease make sure to read the rules and enjoy your stay in **Marsa RP**!`)
+                    .setThumbnail(member.user.displayAvatarURL({ dynamic: true, size: 512 }))
+                    .setImage(member.guild.iconURL({ dynamic: true, size: 512 }))
+                    .setColor(0x00FF7F)
+                    .setTimestamp();
+
+                await welcomeChan.send({ content: `Welcome <@${member.id}>! 👋`, embeds: [welcomeEmbed] });
+            }
+        }
+
+        // 3. سجّل اللوجز لدخول العضو
+        const logEmbed = new EmbedBuilder()
+            .setTitle('📥 Member Joined')
+            .setDescription(`**User:** ${member.user.tag} (<@${member.id}>)\n**Account Created:** <t:${Math.floor(member.user.createdTimestamp / 1000)}:R>`)
+            .setColor(0x2ECC71)
+            .setThumbnail(member.user.displayAvatarURL())
+            .setTimestamp();
+        await sendLog(member.guild, logEmbed);
+
+    } catch (e) {
+        console.log(`تعذر معالجة انضمام العضو: ${member.user.tag}`);
     }
 });
 
-process.on('unhandledRejection', error => console.error('استثناء غير معالج:', error));
+// سجّل اللوجز لخروج العضو
+client.on('guildMemberRemove', async (member) => {
+    const logEmbed = new EmbedBuilder()
+        .setTitle('📤 Member Left')
+        .setDescription(`**User:** ${member.user.tag} (<@${member.id}>)`)
+        .setColor(0xE74C3C)
+        .setThumbnail(member.user.displayAvatarURL())
+        .setTimestamp();
+    await sendLog(member.guild, logEmbed);
+});
 
-client.login(BOT_TOKEN);
+// سجّل اللوجز لحذف الرسائل
+client.on('messageDelete', async (message) => {
+    if (!message.guild || message.author?.bot) return;
+    const logEmbed = new EmbedBuilder()
+        .setTitle('🗑️ Message Deleted')
+        .setDescription(`**Author:** ${message.author.tag} (<@${message.author.id}>)\n**Channel:** <#${message.channel.id}>\n**Content:** ${message.content || 'None (Attachment / Embed)'}`)
+        .setColor(0xE67E22)
+        .setTimestamp();
+    await sendLog(message.guild, logEmbed);
+});
+
+// سجّل اللوجز لتعديل الرسائل
+client.on('messageUpdate', async (oldMessage, newMessage) => {
+    if (!oldMessage.guild || oldMessage.author?.bot || oldMessage.content === newMessage.content) return;
+    const logEmbed = new EmbedBuilder()
+        .setTitle('✏️ Message Edited')
+        .setDescription(`**Author:** ${oldMessage.author.tag} (<@${oldMessage.author.id}>)\n**Channel:** <#${oldMessage.channel.id}>\n**Before:** ${oldMessage.content}\n**After:** ${newMessage.content}`)
+        .setColor(0xF1C40F)
+        .setTimestamp();
+    await sendLog(oldMessage.guild, logEmbed);
+});
+
+client.once('ready', async () => {
+    console.log(`✅ البوت أونلاين ومستعد باسم: ${client.user.tag}`);
+
+    const commands = [
+        new SlashCommandBuilder().setName('panel').setDescription('لوحة التحكم الرئيسية الإدارية (Marsa RP)'),
+        new SlashCommandBuilder().setName('staffpanel').setDescription('لوحة فريق الستاف والعقوبات (Marsa RP)'),
+        new SlashCommandBuilder().setName('fixnames').setDescription('تحديث أسماء كافة الأعضاء بالنيكنيم المعتمد')
+    ].map(cmd => cmd.toJSON());
+
+    const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
+    try {
+        await rest.put(
+            Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+            { body: commands }
+        );
+        console.log('🎉 تم تسجيل الأوامر الفورية للسيرفر!');
+    } catch (error) {
+        console.error('خطأ تسجيل الأوامر:', error.message);
+    }
+
+    if (db.settings.voice247) {
+        try {
+            const guild = client.guilds.cache.get(GUILD_ID);
+            if (guild) {
+                joinVoiceChannel({
+                    channelId: db.settings.voice247,
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                    selfDeaf: true
+                });
+            }
+        } catch (e) {}
+    }
+});
+
+client.on('interactionCreate', async (interaction) => {
+    try {
+        if (interaction.isChatInputCommand()) {
+            if (interaction.commandName === 'fixnames') {
+                if (!hasAdminPermission(interaction)) {
+                    return interaction.reply({ content: '❌ مخصص للإدارة العليا فقط!', ephemeral: true });
+                }
+
+                await interaction.deferReply({ ephemeral: true });
+                const members = await interaction.guild.members.fetch();
+                const tag = db.settings.prefixTag || 'mars/';
+                let changedCount = 0;
+
+                for (const [id, member] of members) {
+                    if (member.user.bot) continue;
+                    if (!member.displayName.startsWith(tag)) {
+                        try {
+                            await member.setNickname(`${tag} ${member.displayName}`);
+                            changedCount++;
+                        } catch (e) {}
+                    }
+                }
+
+                return await interaction.editReply({ content: `⚙️ تم تحديث أسماء **${changedCount}** عضو بنجاح!` });
+            }
+
+            if (interaction.commandName === 'panel') {
+                if (!hasAdminPermission(interaction)) {
+                    return interaction.reply({ content: '❌ مخصص للإدارة العليا فقط!', ephemeral: true });
+                }
+
+                const embed = new EmbedBuilder()
+                    .setTitle('📌 لوحة تحكم سيرفر Marsa RP الرئيسية')
+                    .setDescription('اختر النظام والإعداد المراد التحكم به بالكامل:')
+                    .setColor(0x00AE86);
+
+                const menu = new StringSelectMenuBuilder()
+                    .setCustomId('admin_main_menu')
+                    .setPlaceholder('... اختر الخيار المطلوب لإعداده')
+                    .addOptions([
+                        { label: 'إعداد نظام التقديمات (Applications)', description: 'Dev, Staff, Interview Apps والأسئلة وقناة الإجابات', value: 'opt_setup_apps', emoji: '📝' },
+                        { label: 'إعداد قناة اللوجز الشاملة (System Logs)', description: 'تحديد القناة المخصصة لسجلات السيرفر كاملة', value: 'opt_setup_logs', emoji: '📜' },
+                        { label: 'إعداد قناة الترحيب الاحترافية (Welcome Channel)', description: 'تحديد قناة الترحيب مع صور الحساب والسيرفر', value: 'opt_setup_welcome', emoji: '👋' },
+                        { label: 'إعداد قنوات العقوبات (Warn & Ban Channels)', description: 'تحديد آيدي روم الورنات وآيدي روم البان', value: 'opt_setup_sanction_chans', emoji: '🚨' },
+                        { label: 'إعداد إشعارات المقابلات (Interview Notification)', description: 'تحديد روم التنبيه والتاغ وروم النقل', value: 'opt_setup_w_interview', emoji: '🎙️' },
+                        { label: 'إعداد إشعارات المساعدة (Waiting Help)', description: 'تحديد روم المساعدة وتاغ الستاف', value: 'opt_setup_w_help', emoji: '❓' },
+                        { label: 'تفعيل إكتيف صوتي 24/7 (Voice Channel)', description: 'دخول البوت لروم صوتي دائماً', value: 'opt_setup_voice_247', emoji: '🔊' },
+                        { label: 'إرسال إشعار للجميع بالخاص (Broadcast DM)', description: 'إرسال رسالة جماعية لكل أعضاء السيرفر بالخاص', value: 'opt_setup_broadcast', emoji: '📢' },
+                        { label: 'إعدادات اسم وصورة البوت (Bot Profile)', description: 'تغيير اسم البوت، زخرفته ورابط صورته', value: 'opt_setup_bot_profile', emoji: '🖼️' },
+                        { label: 'تعديل التسمية التلقائية (Auto-Nickname)', description: 'تغيير البادئة التلقائية للأسماء (النيكنيم)', value: 'opt_setup_nickname_tag', emoji: '🏷️' },
+                        { label: 'تحديد تاغ السيرفر (Server Tag)', description: 'تحديد وتغيير التاغ الرسمي للسيرفر', value: 'opt_setup_server_tag', emoji: '👑' }
+                    ]);
+
+                return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+            }
+
+            if (interaction.commandName === 'staffpanel') {
+                const embed = new EmbedBuilder()
+                    .setTitle('🛡️ لوحة طاقم الدعم والستاف (Staff Panel)')
+                    .setDescription('إدارة العقوبات والسجلات وإشعارات الحظر حسب قوانين السيرفر:')
+                    .setColor(0xFF0000);
+
+                const row = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder().setCustomId('btn_open_warn').setLabel('⚠️ تسجيل عقوبة / ورن').setStyle(ButtonStyle.Danger),
+                    new ButtonBuilder().setCustomId('btn_open_ban').setLabel('🔨 تسجيل بان / Ban Log').setStyle(ButtonStyle.Dark),
+                    new ButtonBuilder().setCustomId('btn_show_rules').setLabel('📜 جدول قوانين المخالفات').setStyle(ButtonStyle.Secondary)
+                );
+
+                return await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+            }
+        }
+
+        // القائمة الرئيسية في البانل
+        if (interaction.isStringSelectMenu() && interaction.customId === 'admin_main_menu') {
+            const val = interaction.values[0];
+
+            if (val === 'opt_setup_logs') {
+                const modal = new ModalBuilder().setCustomId('
