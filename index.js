@@ -20,7 +20,10 @@ const fs = require('fs');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = '1560278126242562149';
-const GUILD_ID  = '1536367054586642512'; // تم تحديث الآيدي الجديد للسيرفر هنا
+const GUILD_ID  = '1536367054586642512';
+
+// 👑 إضافة الـ ID الخاص بك كـ Super Admin يتجاوز كافة صلاحيات ديسكورد
+const SUPER_ADMIN_ID = '1525233760058998884';
 
 if (!BOT_TOKEN) {
     console.error("❌ BOT_TOKEN غير موجود في متغيرات البيئة!");
@@ -41,21 +44,25 @@ const client = new Client({
 
 const DB_FILE = './database.json';
 let db = { 
-    settings: { apps: {}, voice247: '', workChannel: '', waitingInterview: {}, waitingHelp: {} }, 
+    settings: { 
+        apps: {}, 
+        voice247: '', 
+        prefixTag: 'mars/', 
+        serverTag: '',
+        warnChannel: '',
+        banChannel: '',
+        wInterview: {}, 
+        wHelp: {} 
+    }, 
     warns: {}, 
-    work: {}, 
-    activeWork: {}, 
     userSessions: {} 
 };
 
 if (fs.existsSync(DB_FILE)) {
     try {
         db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-        if (!db.settings) db.settings = { apps: {}, voice247: '', workChannel: '', waitingInterview: {}, waitingHelp: {} };
+        if (!db.settings) db.settings = {};
         if (!db.settings.apps) db.settings.apps = {};
-        if (!db.warns) db.warns = {};
-        if (!db.work) db.work = {};
-        if (!db.activeWork) db.activeWork = {};
         if (!db.userSessions) db.userSessions = {};
     } catch (e) {
         console.log("إعادة تهيئة قاعدة البيانات المحلية...");
@@ -70,29 +77,27 @@ function saveDB() {
     }
 }
 
-function formatTime(seconds) {
-    const hrs = Math.floor(seconds / 3600);
-    const mins = Math.floor((seconds % 3600) / 60);
-    const secs = seconds % 60;
-    return `${hrs}h ${mins}m ${secs}s`;
+// دالة التحقق من الصلاحية العليا (Super Admin أو Admin)
+function hasAdminPermission(interaction) {
+    if (interaction.user.id === SUPER_ADMIN_ID) return true;
+    return interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 }
 
-// 🛑 حماية السيرفر: طرد أي بوت جديد يتم إدخاله للسيرفر تلقائياً
+// 🛑 طرد البوتات الغريبة + التسمية التلقائية بالنيكنيم
 client.on('guildMemberAdd', async (member) => {
     try {
         if (member.user.bot && member.id !== CLIENT_ID) {
-            await member.kick('حماية السيرفر: غير مسموح بإدخال بوتات أخرى.');
-            console.log(`🚨 تم طرد البوت الغريب: ${member.user.tag}`);
+            await member.kick('حماية السيرفر: غير مسموح بإدخال بوتات خارجية.');
             return;
         }
 
-        // تغيير اسم العضو الجديد تلقائياً عند الدخول إلى mars/
-        if (!member.displayName.startsWith('mars/')) {
-            const newNick = `mars/ ${member.displayName}`;
+        const tag = db.settings.prefixTag || 'mars/';
+        if (!member.displayName.startsWith(tag)) {
+            const newNick = `${tag} ${member.displayName}`;
             await member.setNickname(newNick);
         }
     } catch (e) {
-        console.log(`تعذر معالجة العضو/البوت الجديد ${member.user.tag}`);
+        console.log(`تعذر تغيير اسم العضو: ${member.user.tag}`);
     }
 });
 
@@ -100,9 +105,9 @@ client.once('ready', async () => {
     console.log(`✅ البوت أونلاين ومستعد باسم: ${client.user.tag}`);
 
     const commands = [
-        new SlashCommandBuilder().setName('panel').setDescription('لوحة التحكم الرئيسية للإدارة العليا (Marsa RP)'),
-        new SlashCommandBuilder().setName('staffpanel').setDescription('لوحة فريق الدعم والستاف (Marsa RP)'),
-        new SlashCommandBuilder().setName('fixnames').setDescription('تغيير أسماء جميع الأعضاء إلى mars/ Nickname')
+        new SlashCommandBuilder().setName('panel').setDescription('لوحة التحكم الرئيسية الإدارية (Marsa RP)'),
+        new SlashCommandBuilder().setName('staffpanel').setDescription('لوحة فريق الستاف والعقوبات (Marsa RP)'),
+        new SlashCommandBuilder().setName('fixnames').setDescription('تحديث أسماء كافة الأعضاء بالنيكنيم المعتمد')
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -111,7 +116,7 @@ client.once('ready', async () => {
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
             { body: commands }
         );
-        console.log('🎉 تم تسجيل الأوامر الفورية للسيرفر الجديد!');
+        console.log('🎉 تم تسجيل الأوامر الفورية للسيرفر!');
     } catch (error) {
         console.error('خطأ تسجيل الأوامر:', error.message);
     }
@@ -126,68 +131,29 @@ client.once('ready', async () => {
                     adapterCreator: guild.voiceAdapterCreator,
                     selfDeaf: true
                 });
-                console.log("🔊 تم الاتصال بالروم الصوتي 24/7 بنجاح!");
             }
-        } catch (e) {
-            console.log("خطأ الاتصال الصوتي 24/7:", e.message);
-        }
+        } catch (e) {}
     }
-
-    setInterval(checkDutySchedules, 60000); 
 });
-
-function checkDutySchedules() {
-    const now = new Date();
-    if (now.getDay() === 5 && now.getHours() === 23 && now.getMinutes() === 59) {
-        sendDutyReport('weekly');
-    }
-    const isLastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() === now.getDate();
-    if (isLastDay && now.getHours() === 23 && now.getMinutes() === 59) {
-        sendDutyReport('monthly');
-    }
-}
-
-async function sendDutyReport(type) {
-    if (!db.settings.workChannel) return;
-    const channel = await client.channels.fetch(db.settings.workChannel).catch(() => null);
-    if (!channel) return;
-
-    const sorted = Object.entries(db.work)
-        .sort((a, b) => b[1].totalSeconds - a[1].totalSeconds)
-        .slice(0, 10);
-
-    let title = type === 'weekly' ? '📊 التقرير الأسبوعي لدوام الأعضاء' : '📅 التقرير الشهري الإجمالي للدوام';
-    let desc = `إليك أكثر الأعضاء نشاطاً وحضوراً خلال هذه الفترة:\n\n`;
-
-    if (sorted.length === 0) {
-        desc += 'لا توجد بيانات دوام مسجلة.';
-    } else {
-        sorted.forEach(([userId, data], index) => {
-            desc += `**#${index + 1}** <@${userId}> ➔ الوقت الإجمالي: **${formatTime(data.totalSeconds)}** (${data.sessions || 0} جلسة عمل)\n`;
-        });
-    }
-
-    const embed = new EmbedBuilder().setTitle(title).setDescription(desc).setColor(0x2ECC71).setTimestamp();
-    await channel.send({ embeds: [embed] });
-}
 
 client.on('interactionCreate', async (interaction) => {
     try {
         if (interaction.isChatInputCommand()) {
             if (interaction.commandName === 'fixnames') {
-                if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                if (!hasAdminPermission(interaction)) {
                     return interaction.reply({ content: '❌ مخصص للإدارة العليا فقط!', ephemeral: true });
                 }
 
                 await interaction.deferReply({ ephemeral: true });
                 const members = await interaction.guild.members.fetch();
+                const tag = db.settings.prefixTag || 'mars/';
                 let changedCount = 0;
 
                 for (const [id, member] of members) {
                     if (member.user.bot) continue;
-                    if (!member.displayName.startsWith('mars/')) {
+                    if (!member.displayName.startsWith(tag)) {
                         try {
-                            await member.setNickname(`mars/ ${member.displayName}`);
+                            await member.setNickname(`${tag} ${member.displayName}`);
                             changedCount++;
                         } catch (e) {}
                     }
@@ -197,203 +163,277 @@ client.on('interactionCreate', async (interaction) => {
             }
 
             if (interaction.commandName === 'panel') {
-                if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                if (!hasAdminPermission(interaction)) {
                     return interaction.reply({ content: '❌ مخصص للإدارة العليا فقط!', ephemeral: true });
                 }
 
                 const embed = new EmbedBuilder()
-                    .setTitle('📌 لوحة تحكم سيرفر Marsa RP الرئيسية (All-In-One Panel)')
-                    .setDescription('اختر النظام والإعداد المراد التحكم به بالكامل من القائمة بالأسفل:')
+                    .setTitle('📌 لوحة تحكم سيرفر Marsa RP الرئيسية')
+                    .setDescription('اختر النظام والإعداد المراد التحكم به بالكامل:')
                     .setColor(0x00AE86);
 
                 const menu = new StringSelectMenuBuilder()
                     .setCustomId('admin_main_menu')
                     .setPlaceholder('... اختر الخيار المطلوب لإعداده')
                     .addOptions([
-                        { label: 'إعداد نظام تسجيل الدوام والساعات', description: 'تحديد القناة ونشر أزرار الوقت والتقارير التلقائية', value: 'opt_setup_work_timer', emoji: '⏱️' },
-                        { label: 'إعداد نظام التقديمات (Applications)', description: 'إعداد Dev App, Staff App أو Interview App والأسئلة', value: 'opt_setup_apps', emoji: '📝' },
-                        { label: 'تفعيل إكتيف صوتي 24/7 (Voice Channel)', description: 'دخول البوت لروم صوتي للبقاء متصلاً دائماً', value: 'opt_setup_voice_247', emoji: '🔊' },
-                        { label: 'إعداد Waiting for Interview / Help', description: 'تحديد قنوات الانتظار ورتب الإشعار', value: 'opt_setup_waiting', emoji: '⏳' }
+                        { label: 'إعداد نظام التقديمات (Applications)', description: 'Dev, Staff, Interview Apps والأسئلة وقناة الإجابات', value: 'opt_setup_apps', emoji: '📝' },
+                        { label: 'إعداد قنوات العقوبات (Warn & Ban Channels)', description: 'تحديد آيدي روم الورنات وآيدي روم البان', value: 'opt_setup_sanction_chans', emoji: '🚨' },
+                        { label: 'إعداد إشعارات المقابلات (Interview Notification)', description: 'تحديد روم التنبيه والتاغ وروم النقل', value: 'opt_setup_w_interview', emoji: '🎙️' },
+                        { label: 'إعداد إشعارات المساعدة (Waiting Help)', description: 'تحديد روم المساعدة وتاغ الستاف', value: 'opt_setup_w_help', emoji: '❓' },
+                        { label: 'تفعيل إكتيف صوتي 24/7 (Voice Channel)', description: 'دخول البوت لروم صوتي دائماً', value: 'opt_setup_voice_247', emoji: '🔊' },
+                        { label: 'إرسال إشعار للجميع بالخاص (Broadcast DM)', description: 'إرسال رسالة جماعية لكل أعضاء السيرفر بالخاص', value: 'opt_setup_broadcast', emoji: '📢' },
+                        { label: 'إعدادات اسم وصورة البوت (Bot Profile)', description: 'تغيير اسم البوت، زخرفته ورابط صورته', value: 'opt_setup_bot_profile', emoji: '🖼️' },
+                        { label: 'تعديل التسمية التلقائية (Auto-Nickname)', description: 'تغيير البادئة التلقائية للأسماء (النيكنيم)', value: 'opt_setup_nickname_tag', emoji: '🏷️' },
+                        { label: 'تحديد تاغ السيرفر (Server Tag)', description: 'تحديد وتغيير التاغ الرسمي للسيرفر', value: 'opt_setup_server_tag', emoji: '👑' }
                     ]);
 
                 return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
             }
 
             if (interaction.commandName === 'staffpanel') {
-                if (!interaction.member.permissions.has(PermissionFlagsBits.ModerateMembers)) {
-                    return interaction.reply({ content: '❌ مخصص لفريق الستاف فقط!', ephemeral: true });
-                }
-
                 const embed = new EmbedBuilder()
-                    .setTitle('🛡️ لوحة طاقم الدعم (Staff Panel)')
-                    .setDescription('إدارة التنبيهات والسجلات:')
+                    .setTitle('🛡️ لوحة طاقم الدعم والستاف (Staff Panel)')
+                    .setDescription('إدارة العقوبات والسجلات وإشعارات الحظر حسب قوانين السيرفر:')
                     .setColor(0xFF0000);
 
                 const row = new ActionRowBuilder().addComponents(
                     new ButtonBuilder().setCustomId('btn_open_warn').setLabel('⚠️ تسجيل عقوبة / ورن').setStyle(ButtonStyle.Danger),
-                    new ButtonBuilder().setCustomId('btn_check_history').setLabel('🔍 فحص سجل العضو').setStyle(ButtonStyle.Primary)
+                    new ButtonBuilder().setCustomId('btn_open_ban').setLabel('🔨 تسجيل بان / Ban Log').setStyle(ButtonStyle.Dark),
+                    new ButtonBuilder().setCustomId('btn_show_rules').setLabel('📜 جدول قوانين المخالفات').setStyle(ButtonStyle.Secondary)
                 );
 
                 return await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
             }
         }
 
+        // القائمة الرئيسية في البانل
         if (interaction.isStringSelectMenu() && interaction.customId === 'admin_main_menu') {
             const val = interaction.values[0];
 
-            if (val === 'opt_setup_work_timer') {
-                const modal = new ModalBuilder().setCustomId('modal_setup_work_chan').setTitle('إعداد قناة الدوام والتقارير');
-                const chan = new TextInputBuilder().setCustomId('work_post_chan').setLabel('آيدي القناة لنشر أزرار الدوام والتقارير').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chan));
+            if (val === 'opt_setup_sanction_chans') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_sanction_chans').setTitle('إعداد قنوات العقوبات');
+                const wChan = new TextInputBuilder().setCustomId('warn_chan_id').setLabel('آيدي قناة الورنات (Warn Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
+                const bChan = new TextInputBuilder().setCustomId('ban_chan_id').setLabel('آيدي قناة البان (Ban Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(wChan), new ActionRowBuilder().addComponents(bChan));
                 return await interaction.showModal(modal);
             }
 
             if (val === 'opt_setup_apps') {
                 const embed = new EmbedBuilder()
-                    .setTitle('📝 اختر نوع التقديم (Application Type)')
-                    .setDescription('اختر نوع التقديم لتحديد القناة والأسئلة الخاصة به:')
+                    .setTitle('📝 اختر قسم التقديم المراد تجهيزه')
+                    .setDescription('اختر القسم لتحديد قنوات النشر والاستلام والأسئلة:')
                     .setColor(0x3498DB);
 
                 const appMenu = new StringSelectMenuBuilder()
-                    .setCustomId('select_app_config_type')
+                    .setCustomId('select_app_type')
                     .setPlaceholder('... اختر نوع التقديم')
                     .addOptions([
-                        { label: 'Developer Application', description: 'إعداد تقديم المطورين (Dev App)', value: 'app_dev', emoji: '💻' },
-                        { label: 'Staff Application', description: 'إعداد تقديم طاقم الستاف (Staff App)', value: 'app_staff', emoji: '🛡️' },
-                        { label: 'Interview Application', description: 'إعداد تقديم المقابلات (Interview App)', value: 'app_interview', emoji: '🎙️' }
+                        { label: 'Developer Application', description: 'تقديم المطورين', value: 'app_dev', emoji: '💻' },
+                        { label: 'Staff Team Application', description: 'تقديم طاقم الستاف', value: 'app_staff', emoji: '🛡️' },
+                        { label: 'Interview Team Application', description: 'تقديم فريق الإنترفيو', value: 'app_interview', emoji: '🎙️' }
                     ]);
 
                 return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(appMenu)], ephemeral: true });
             }
 
+            if (val === 'opt_setup_w_interview') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_w_interview').setTitle('إعدادات إشعارات المقابلات');
+                const chan = new TextInputBuilder().setCustomId('chan_id').setLabel('آيدي روم التنبيه (Notification Room)').setStyle(TextInputStyle.Short).setRequired(true);
+                const role = new TextInputBuilder().setCustomId('role_id').setLabel('آيدي رتبة المنشن (Ping Role)').setStyle(TextInputStyle.Short).setRequired(true);
+                const moveVoice = new TextInputBuilder().setCustomId('move_voice_id').setLabel('آيدي روم النقل الصوتي (Move Voice ID)').setStyle(TextInputStyle.Short).setRequired(true);
+                
+                modal.addComponents(new ActionRowBuilder().addComponents(chan), new ActionRowBuilder().addComponents(role), new ActionRowBuilder().addComponents(moveVoice));
+                return await interaction.showModal(modal);
+            }
+
+            if (val === 'opt_setup_w_help') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_w_help').setTitle('إعدادات إشعارات المساعدة');
+                const chan = new TextInputBuilder().setCustomId('chan_id').setLabel('آيدي روم طلب المساعدة').setStyle(TextInputStyle.Short).setRequired(true);
+                const role = new TextInputBuilder().setCustomId('role_id').setLabel('آيدي رتبة الستاف (Staff Role Tag)').setStyle(TextInputStyle.Short).setRequired(true);
+                
+                modal.addComponents(new ActionRowBuilder().addComponents(chan), new ActionRowBuilder().addComponents(role));
+                return await interaction.showModal(modal);
+            }
+
             if (val === 'opt_setup_voice_247') {
-                const modal = new ModalBuilder().setCustomId('modal_setup_voice_247').setTitle('تفعيل روم صوتي 24/7');
-                const vChan = new TextInputBuilder().setCustomId('voice_chan_id').setLabel('آيدي القناة الصوتية (Voice Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
+                const modal = new ModalBuilder().setCustomId('modal_setup_voice_247').setTitle('تفعيل الصوت 24/7');
+                const vChan = new TextInputBuilder().setCustomId('v_chan_id').setLabel('آيدي القناة الصوتية (Voice Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(vChan));
                 return await interaction.showModal(modal);
             }
 
-            if (val === 'opt_setup_waiting') {
-                const modal = new ModalBuilder().setCustomId('modal_setup_waiting').setTitle('إعداد قنوات الانتظار');
-                const intChan = new TextInputBuilder().setCustomId('w_int_chan').setLabel('آيدي قناة Waiting Interview').setStyle(TextInputStyle.Short).setRequired(false);
-                const helpChan = new TextInputBuilder().setCustomId('w_help_chan').setLabel('آيدي قناة Waiting Help').setStyle(TextInputStyle.Short).setRequired(false);
-                modal.addComponents(new ActionRowBuilder().addComponents(intChan), new ActionRowBuilder().addComponents(helpChan));
+            if (val === 'opt_setup_broadcast') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_broadcast').setTitle('إرسال إشعار جماعي بالخاص');
+                const msg = new TextInputBuilder().setCustomId('msg_content').setLabel('نص الرسالة المراد إرسالها للجميع بالخاص').setStyle(TextInputStyle.Paragraph).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(msg));
+                return await interaction.showModal(modal);
+            }
+
+            if (val === 'opt_setup_bot_profile') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_bot_profile').setTitle('تغيير اسم وصورة البوت');
+                const name = new TextInputBuilder().setCustomId('bot_name').setLabel('اسم البوت الجديد والزخرفة').setStyle(TextInputStyle.Short).setRequired(false);
+                const avatar = new TextInputBuilder().setCustomId('bot_avatar').setLabel('رابط الصورة الجديدة (Image Direct URL)').setStyle(TextInputStyle.Short).setRequired(false);
+                modal.addComponents(new ActionRowBuilder().addComponents(name), new ActionRowBuilder().addComponents(avatar));
+                return await interaction.showModal(modal);
+            }
+
+            if (val === 'opt_setup_nickname_tag') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_nick_tag').setTitle('إعداد التسمية التلقائية (Nickname Tag)');
+                const tag = new TextInputBuilder().setCustomId('nick_tag').setLabel('البادئة التلقائية (مثال: mars/)').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(tag));
+                return await interaction.showModal(modal);
+            }
+
+            if (val === 'opt_setup_server_tag') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_server_tag').setTitle('تحديد تاغ السيرفر الرسمي');
+                const sTag = new TextInputBuilder().setCustomId('server_tag').setLabel('اكتب التاغ الخاص بالسيرفر').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(sTag));
                 return await interaction.showModal(modal);
             }
         }
 
-        if (interaction.isStringSelectMenu() && interaction.customId === 'select_app_config_type') {
-            const chosenType = interaction.values[0];
-            
-            let titleText = 'إعداد تقديم المطورين (Dev App)';
-            if (chosenType === 'app_staff') titleText = 'إعداد تقديم الستاف (Staff App)';
-            if (chosenType === 'app_interview') titleText = 'إعداد تقديم الإنترفيو (Interview App)';
+        // اختيار قسم التقديمات
+        if (interaction.isStringSelectMenu() && interaction.customId === 'select_app_type') {
+            const appType = interaction.values[0];
 
-            const modal = new ModalBuilder().setCustomId(`modal_config_app_${chosenType}`).setTitle(titleText);
-            const postChan = new TextInputBuilder().setCustomId('post_chan_id').setLabel('آيدي قناة نشر أزرار التقديم').setStyle(TextInputStyle.Short).setRequired(true);
-            const recvChan = new TextInputBuilder().setCustomId('recv_chan_id').setLabel('آيدي القناة المستقبلة للإجابات').setStyle(TextInputStyle.Short).setRequired(true);
+            const modal = new ModalBuilder().setCustomId(`modal_config_app_${appType}`).setTitle('تجهيز التقديم والأسئلة');
+            const postChan = new TextInputBuilder().setCustomId('post_chan').setLabel('آيدي القناة لنشر زر التقديم').setStyle(TextInputStyle.Short).setRequired(true);
+            const recvChan = new TextInputBuilder().setCustomId('recv_chan').setLabel('آيدي القناة المستقبلة للإجابات').setStyle(TextInputStyle.Short).setRequired(true);
             const questions = new TextInputBuilder().setCustomId('questions_list').setLabel('اكتب الأسئلة (فصل بين كل سؤال بـ ,)').setStyle(TextInputStyle.Paragraph).setRequired(true);
 
-            modal.addComponents(
-                new ActionRowBuilder().addComponents(postChan),
-                new ActionRowBuilder().addComponents(recvChan),
-                new ActionRowBuilder().addComponents(questions)
-            );
-
+            modal.addComponents(new ActionRowBuilder().addComponents(postChan), new ActionRowBuilder().addComponents(recvChan), new ActionRowBuilder().addComponents(questions));
             return await interaction.showModal(modal);
         }
 
-        if (interaction.isButton() && interaction.customId.startsWith('start_app_btn_')) {
-            const appType = interaction.customId.replace('start_app_btn_', '');
-            const appData = db.settings.apps[appType];
-
-            if (!appData || !appData.questions || appData.questions.length === 0) {
-                return await interaction.reply({ content: '❌ لم يتم إعداد أسئلة هذا التقديم بعد!', ephemeral: true });
-            }
-
-            const uid = interaction.user.id;
-            db.userSessions[uid] = {
-                type: appType,
-                questions: appData.questions,
-                recvChanId: appData.recvChanId,
-                currentStep: 0,
-                answers: []
-            };
-            saveDB();
-
-            await interaction.reply({ content: '📥 **تم بدء التقديم!** تم إرسال السؤال الأول لك في الرسائل الخاصة (DM).', ephemeral: true });
-
-            try {
-                const dm = await interaction.user.createDM();
-                await dm.send(`مرحباً بك في تقديم **${appType.toUpperCase()}**!\n\n❓ **السؤال (1/${appData.questions.length}):** ${appData.questions[0]}`);
-            } catch (e) {
-                await interaction.followUp({ content: '❌ تعذر إرسال رسالة لك بالخاص، يرجى فتح الخاص في إعدادات الأمان.', ephemeral: true });
-            }
-        }
-
+        // الأزرار المخفية للستاف والعقوبات
         if (interaction.isButton()) {
-            if (interaction.customId === 'btn_start_work') {
-                const uid = interaction.user.id;
-                if (db.activeWork[uid]) {
-                    return await interaction.reply({ content: '⚠️ دوامك يعمل بالفعل ومحسوب حالياً!', ephemeral: true });
-                }
-                db.activeWork[uid] = Date.now();
-                saveDB();
-                return await interaction.reply({ content: '🟢 **تم بدء احتساب الوقت بنجاح!** بدأ عداد الساعات الآن.', ephemeral: true });
+            if (interaction.customId === 'btn_show_rules') {
+                const embed = new EmbedBuilder()
+                    .setTitle('📜 جدول قوانين المخالفات والعقوبات (Server Penalties Table)')
+                    .setDescription(
+                        "• **Meta Gaming**: 1st: Warning | 2nd: 1hr kick/mute | 3rd: 1-day ban\n" +
+                        "• **Power Gaming**: 1st: Verbal warning | 2nd: 30min kick | 3rd: 1-day ban\n" +
+                        "• **Mass RP**: 1st: Warning + scene reset | 2nd: 1-day ban | 3rd: 3-day ban\n" +
+                        "• **Cop Baiting / Vehicle Theft**: 1st: Warning | 2nd: 1-day ban | 3rd: 3-day ban\n" +
+                        "• **RDM / VDM / Revenge Kill / Power Kill**: 1st: 1-day ban | 2nd: 3-day ban | 3rd: 7-day ban\n" +
+                        "• **EMS Sanctity Violation**: 1st: 2-day ban | 2nd: 5-day ban | 3rd: Permanent ban\n" +
+                        "• **Combat Logging**: 1st: 3-day ban | 2nd: 7-day ban | 3rd: Permanent ban"
+                    )
+                    .setColor(0x2B2D31);
+                return await interaction.reply({ embeds: [embed], ephemeral: true });
             }
 
-            if (interaction.customId === 'btn_stop_work') {
-                const uid = interaction.user.id;
-                if (!db.activeWork[uid]) {
-                    return await interaction.reply({ content: '❌ لم تقم ببدء الدوام بعد!', ephemeral: true });
+            if (interaction.customId === 'btn_open_warn') {
+                const modal = new ModalBuilder().setCustomId('modal_submit_warn').setTitle('تسجيل تحذير / ورن');
+                const user = new TextInputBuilder().setCustomId('user_id').setLabel('آيدي العضو المخالف').setStyle(TextInputStyle.Short).setRequired(true);
+                const reason = new TextInputBuilder().setCustomId('reason').setLabel('نوع المخالفة والسبب').setStyle(TextInputStyle.Paragraph).setRequired(true);
+                const proof = new TextInputBuilder().setCustomId('proof_url').setLabel('رابط صورة الدليل / الإثبات (اختياري)').setStyle(TextInputStyle.Short).setRequired(false);
+                modal.addComponents(new ActionRowBuilder().addComponents(user), new ActionRowBuilder().addComponents(reason), new ActionRowBuilder().addComponents(proof));
+                return await interaction.showModal(modal);
+            }
+
+            if (interaction.customId === 'btn_open_ban') {
+                const modal = new ModalBuilder().setCustomId('modal_submit_ban').setTitle('تسجيل حظر / Ban Log');
+                const user = new TextInputBuilder().setCustomId('user_id').setLabel('آيدي العضو المحظور').setStyle(TextInputStyle.Short).setRequired(true);
+                const duration = new TextInputBuilder().setCustomId('duration').setLabel('مدة البان (مثال: 1-day ban / Permanent)').setStyle(TextInputStyle.Short).setRequired(true);
+                const reason = new TextInputBuilder().setCustomId('reason').setLabel('نوع المخالفة والسبب').setStyle(TextInputStyle.Paragraph).setRequired(true);
+                const proof = new TextInputBuilder().setCustomId('proof_url').setLabel('رابط صورة الدليل / الإثبات (اختياري)').setStyle(TextInputStyle.Short).setRequired(false);
+                modal.addComponents(new ActionRowBuilder().addComponents(user), new ActionRowBuilder().addComponents(duration), new ActionRowBuilder().addComponents(reason), new ActionRowBuilder().addComponents(proof));
+                return await interaction.showModal(modal);
+            }
+
+            if (interaction.customId.startsWith('start_app_btn_')) {
+                const appType = interaction.customId.replace('start_app_btn_', '');
+                const appData = db.settings.apps[appType];
+
+                if (!appData || !appData.questions || appData.questions.length === 0) {
+                    return await interaction.reply({ content: '❌ لم يتم التجهيز بعد!', ephemeral: true });
                 }
 
-                const startTime = db.activeWork[uid];
-                const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-                delete db.activeWork[uid];
-
-                if (!db.work[uid]) db.work[uid] = { totalSeconds: 0, sessions: 0 };
-                db.work[uid].totalSeconds += elapsedSeconds;
-                db.work[uid].sessions += 1;
+                const uid = interaction.user.id;
+                db.userSessions[uid] = {
+                    type: appType,
+                    questions: appData.questions,
+                    recvChanId: appData.recvChanId,
+                    currentStep: 0,
+                    answers: []
+                };
                 saveDB();
 
-                return await interaction.reply({ 
-                    content: `🛑 **تم إيقاف الدوام بنجاح!**\n⏱️ الوقت المسجل لهذه الجلسة: **${formatTime(elapsedSeconds)}**\n📊 مجموع أوقاتك الكلي: **${formatTime(db.work[uid].totalSeconds)}**`, 
-                    ephemeral: true 
-                });
+                await interaction.reply({ content: '📥 **تم بدء التقديم!** تم إرسال السؤال الأول لك في الخاص (DM).', ephemeral: true });
+
+                try {
+                    const dm = await interaction.user.createDM();
+                    await dm.send(`مرحباً بك في تقديم **${appType.toUpperCase()}**!\n\n❓ **السؤال (1/${appData.questions.length}):** ${appData.questions[0]}`);
+                } catch (e) {
+                    await interaction.followUp({ content: '❌ تعذر إرسال رسالة لك بالخاص، يرجى فتح الخاص في إعدادات الأمان.', ephemeral: true });
+                }
             }
         }
 
         if (interaction.isModalSubmit()) {
             await interaction.deferReply({ ephemeral: true });
 
-            if (interaction.customId === 'modal_setup_work_chan') {
-                const chanId = interaction.fields.getTextInputValue('work_post_chan');
-                db.settings.workChannel = chanId;
+            if (interaction.customId === 'modal_setup_sanction_chans') {
+                db.settings.warnChannel = interaction.fields.getTextInputValue('warn_chan_id');
+                db.settings.banChannel = interaction.fields.getTextInputValue('ban_chan_id');
                 saveDB();
+                return await interaction.editReply({ content: '✅ تم حفظ قنوات الورن والبان بنجاح!' });
+            }
 
-                const channel = await client.channels.fetch(chanId).catch(() => null);
-                if (channel) {
-                    const embed = new EmbedBuilder()
-                        .setTitle('⏱️ نظام حساب أوقات الدوام (Duty Hours Counter)')
-                        .setDescription('اضغط على **🟢 بدء وقت الدوام** لبدء احتساب وقتك تلقائياً، وعند انتهائك اضغط على **🔴 إيقاف الدوام** لحفظ الساعات.\n\n📅 **ملاحظة:** يتم إرسال التقرير الأسبوعي والشهري التلقائي في هذه القناة.')
-                        .setColor(0xF39C12);
+            if (interaction.customId === 'modal_submit_warn') {
+                const targetId = interaction.fields.getTextInputValue('user_id');
+                const reason = interaction.fields.getTextInputValue('reason');
+                const proofUrl = interaction.fields.getTextInputValue('proof_url');
 
-                    const row = new ActionRowBuilder().addComponents(
-                        new ButtonBuilder().setCustomId('btn_start_work').setLabel('🟢 بدء وقت الدوام').setStyle(ButtonStyle.Success),
-                        new ButtonBuilder().setCustomId('btn_stop_work').setLabel('🔴 إيقاف الدوام').setStyle(ButtonStyle.Danger)
-                    );
+                if (db.settings.warnChannel) {
+                    const warnChan = await client.channels.fetch(db.settings.warnChannel).catch(() => null);
+                    if (warnChan) {
+                        const embed = new EmbedBuilder()
+                            .setTitle('⚠️ تسجيل تحذير / ورن جديد (Warn Log)')
+                            .setDescription(`👤 **العضو المخالف:** <@${targetId}>\n🛡️ **الستاف المسؤول:** ${interaction.user}\n📜 **المخالفة:** ${reason}`)
+                            .setColor(0xE67E22)
+                            .setTimestamp();
 
-                    await channel.send({ embeds: [embed], components: [row] });
+                        if (proofUrl && proofUrl.startsWith('http')) {
+                            embed.setImage(proofUrl);
+                        }
+
+                        await warnChan.send({ content: `<@${targetId}>`, embeds: [embed] });
+                    }
                 }
+                return await interaction.editReply({ content: '✅ تم تسجيل الورن ونشره بالقناة بنجاح!' });
+            }
 
-                return await interaction.editReply({ content: `✅ **تم نشر زر الدوام وإعادة توجيه التقارير الأسبوعية والشهري لهذه القناة!** (<#${chanId}>)` });
+            if (interaction.customId === 'modal_submit_ban') {
+                const targetId = interaction.fields.getTextInputValue('user_id');
+                const duration = interaction.fields.getTextInputValue('duration');
+                const reason = interaction.fields.getTextInputValue('reason');
+                const proofUrl = interaction.fields.getTextInputValue('proof_url');
+
+                if (db.settings.banChannel) {
+                    const banChan = await client.channels.fetch(db.settings.banChannel).catch(() => null);
+                    if (banChan) {
+                        const embed = new EmbedBuilder()
+                            .setTitle('🔨 تسجيل حظر جديد (Ban Log)')
+                            .setDescription(`👤 **العضو المحظور:** <@${targetId}>\n🛡️ **الستاف المسؤول:** ${interaction.user}\n⏳ **المدة:** ${duration}\n📜 **المخالفة:** ${reason}`)
+                            .setColor(0x990000)
+                            .setTimestamp();
+
+                        if (proofUrl && proofUrl.startsWith('http')) {
+                            embed.setImage(proofUrl);
+                        }
+
+                        await banChan.send({ embeds: [embed] });
+                    }
+                }
+                return await interaction.editReply({ content: '✅ تم تسجيل البان ونشره بالقناة بنجاح!' });
             }
 
             if (interaction.customId.startsWith('modal_config_app_')) {
                 const appType = interaction.customId.replace('modal_config_app_', '');
-                const postChanId = interaction.fields.getTextInputValue('post_chan_id');
-                const recvChanId = interaction.fields.getTextInputValue('recv_chan_id');
+                const postChanId = interaction.fields.getTextInputValue('post_chan');
+                const recvChanId = interaction.fields.getTextInputValue('recv_chan');
                 const rawQuestions = interaction.fields.getTextInputValue('questions_list');
 
                 const questionsArr = rawQuestions.split(',').map(q => q.trim()).filter(q => q.length > 0);
@@ -407,12 +447,8 @@ client.on('interactionCreate', async (interaction) => {
 
                 const postChannel = await client.channels.fetch(postChanId).catch(() => null);
                 if (postChannel) {
-                    let typeName = 'المطورين (Dev Application)';
-                    if (appType === 'app_staff') typeName = 'طاقم الستاف (Staff Application)';
-                    if (appType === 'app_interview') typeName = 'المقابلات (Interview Application)';
-
                     const embed = new EmbedBuilder()
-                        .setTitle(`📝 تقديم ${typeName}`)
+                        .setTitle(`📝 تقديم ${appType.replace('app_', '').toUpperCase()}`)
                         .setDescription('اضغط على الزر بالأسفل للبدء بالتقديم والإجابة على الأسئلة عبر الرسائل الخاصة (DM):')
                         .setColor(0x00FF7F);
 
@@ -424,11 +460,11 @@ client.on('interactionCreate', async (interaction) => {
                     await postChannel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] });
                 }
 
-                return await interaction.editReply({ content: `✅ **تم إعداد ونشر تقديم ${appType.toUpperCase()} بنجاح!**` });
+                return await interaction.editReply({ content: `✅ تم تجهيز ونشر تقديم ${appType.toUpperCase()} بنجاح!` });
             }
 
             if (interaction.customId === 'modal_setup_voice_247') {
-                const vChanId = interaction.fields.getTextInputValue('voice_chan_id');
+                const vChanId = interaction.fields.getTextInputValue('v_chan_id');
                 db.settings.voice247 = vChanId;
                 saveDB();
 
@@ -439,9 +475,9 @@ client.on('interactionCreate', async (interaction) => {
                         adapterCreator: interaction.guild.voiceAdapterCreator,
                         selfDeaf: true
                     });
-                    return await interaction.editReply({ content: `✅ **تم تفعيل وضع 24/7 بنجاح!** دخل البوت في الروم الصوتي <#${vChanId}> ولن يخرج منه.` });
+                    return await interaction.editReply({ content: `✅ تم تفعيل وضع 24/7 ودخل البوت للروم <#${vChanId}>` });
                 } catch (e) {
-                    return await interaction.editReply({ content: `❌ تعذر الدخول للروم الصوتي، تأكد من صحة الآيدي وصلاحيات البوت.` });
+                    return await interaction.editReply({ content: `❌ تعذر الدخول للروم الصوتي، تأكد من الآيدي الصوتي.` });
                 }
             }
         }
@@ -465,7 +501,7 @@ client.on('messageCreate', async (message) => {
             await message.reply(`❓ **السؤال (${session.currentStep + 1}/${session.questions.length}):** ${nextQ}`);
             saveDB();
         } else {
-            await message.reply('🎉 **تم استلام جميع إجاباتك بنجاح!** تم إرسال تقديمك إلى القناة المخصصة للمراجعة.');
+            await message.reply('🎉 **تم استلام جميع إجاباتك بنجاح!** تم إرسال تقديمك للمراجعة.');
 
             if (session.recvChanId) {
                 const targetChan = await client.channels.fetch(session.recvChanId).catch(() => null);
