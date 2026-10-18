@@ -20,7 +20,7 @@ const fs = require('fs');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = '1560278126242562149';
-const GUILD_ID  = '1559798237743808535';
+const GUILD_ID  = '1536367054586642512'; // تم تحديث الآيدي الجديد للسيرفر هنا
 
 if (!BOT_TOKEN) {
     console.error("❌ BOT_TOKEN غير موجود في متغيرات البيئة!");
@@ -77,15 +77,22 @@ function formatTime(seconds) {
     return `${hrs}h ${mins}m ${secs}s`;
 }
 
-// تغيير اسم العضو الجديد تلقائياً عند الدخول إلى mars/
+// 🛑 حماية السيرفر: طرد أي بوت جديد يتم إدخاله للسيرفر تلقائياً
 client.on('guildMemberAdd', async (member) => {
     try {
+        if (member.user.bot && member.id !== CLIENT_ID) {
+            await member.kick('حماية السيرفر: غير مسموح بإدخال بوتات أخرى.');
+            console.log(`🚨 تم طرد البوت الغريب: ${member.user.tag}`);
+            return;
+        }
+
+        // تغيير اسم العضو الجديد تلقائياً عند الدخول إلى mars/
         if (!member.displayName.startsWith('mars/')) {
             const newNick = `mars/ ${member.displayName}`;
             await member.setNickname(newNick);
         }
     } catch (e) {
-        console.log(`تعذر تغيير اسم العضو ${member.user.tag}`);
+        console.log(`تعذر معالجة العضو/البوت الجديد ${member.user.tag}`);
     }
 });
 
@@ -104,12 +111,11 @@ client.once('ready', async () => {
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
             { body: commands }
         );
-        console.log('🎉 تم تسجيل الأوامر الفورية!');
+        console.log('🎉 تم تسجيل الأوامر الفورية للسيرفر الجديد!');
     } catch (error) {
         console.error('خطأ تسجيل الأوامر:', error.message);
     }
 
-    // الاتصال الصوتي 24/7
     if (db.settings.voice247) {
         try {
             const guild = client.guilds.cache.get(GUILD_ID);
@@ -127,17 +133,14 @@ client.once('ready', async () => {
         }
     }
 
-    // فحص تقارير الدوام كل دقيقة
     setInterval(checkDutySchedules, 60000); 
 });
 
 function checkDutySchedules() {
     const now = new Date();
-    // تقرير أسبوعي كل يوم جمعة الساعة 23:59
     if (now.getDay() === 5 && now.getHours() === 23 && now.getMinutes() === 59) {
         sendDutyReport('weekly');
     }
-    // تقرير شهري في أخر يوم من الشهر
     const isLastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() === now.getDate();
     if (isLastDay && now.getHours() === 23 && now.getMinutes() === 59) {
         sendDutyReport('monthly');
@@ -153,7 +156,7 @@ async function sendDutyReport(type) {
         .sort((a, b) => b[1].totalSeconds - a[1].totalSeconds)
         .slice(0, 10);
 
-    let title = type === 'weekly' ? '📊 التقرير الأسبوعي لدوام الأعضاء (Weekly Duty Leaderboard)' : '📅 التقرير الشهري الإجمالي لدوام الأعضاء (Monthly Duty Leaderboard)';
+    let title = type === 'weekly' ? '📊 التقرير الأسبوعي لدوام الأعضاء' : '📅 التقرير الشهري الإجمالي للدوام';
     let desc = `إليك أكثر الأعضاء نشاطاً وحضوراً خلال هذه الفترة:\n\n`;
 
     if (sorted.length === 0) {
