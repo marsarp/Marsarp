@@ -15,6 +15,7 @@ const {
     SlashCommandBuilder,
     StringSelectMenuBuilder
 } = require('discord.js');
+const { joinVoiceChannel } = require('@discordjs/voice');
 const fs = require('fs');
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
@@ -22,7 +23,7 @@ const CLIENT_ID = '1560278126242562149';
 const GUILD_ID  = '1559798237743808535';
 
 if (!BOT_TOKEN) {
-    console.error("❌ BOT_TOKEN غير موجود!");
+    console.error("❌ BOT_TOKEN غير موجود في متغيرات البيئة!");
     process.exit(1);
 }
 
@@ -40,7 +41,7 @@ const client = new Client({
 
 const DB_FILE = './database.json';
 let db = { 
-    settings: { waitingInterview: {}, waitingHelp: {}, tickets: {} }, 
+    settings: { apps: {}, voice247: '', workChannel: '', waitingInterview: {}, waitingHelp: {} }, 
     warns: {}, 
     work: {}, 
     activeWork: {}, 
@@ -50,7 +51,8 @@ let db = {
 if (fs.existsSync(DB_FILE)) {
     try {
         db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8'));
-        if (!db.settings) db.settings = { waitingInterview: {}, waitingHelp: {}, tickets: {} };
+        if (!db.settings) db.settings = { apps: {}, voice247: '', workChannel: '', waitingInterview: {}, waitingHelp: {} };
+        if (!db.settings.apps) db.settings.apps = {};
         if (!db.warns) db.warns = {};
         if (!db.work) db.work = {};
         if (!db.activeWork) db.activeWork = {};
@@ -75,7 +77,7 @@ function formatTime(seconds) {
     return `${hrs}h ${mins}m ${secs}s`;
 }
 
-// تغيير اسم أي عضو يدخل تلقائياً إلى mars/
+// تغيير اسم العضو الجديد تلقائياً عند الدخول إلى mars/
 client.on('guildMemberAdd', async (member) => {
     try {
         if (!member.displayName.startsWith('mars/')) {
@@ -93,7 +95,7 @@ client.once('ready', async () => {
     const commands = [
         new SlashCommandBuilder().setName('panel').setDescription('لوحة التحكم الرئيسية للإدارة العليا (Marsa RP)'),
         new SlashCommandBuilder().setName('staffpanel').setDescription('لوحة فريق الدعم والستاف (Marsa RP)'),
-        new SlashCommandBuilder().setName('fixnames').setDescription('تغيير أسماء جميع الأعضاء الموجودين إلى mars/ Nickname')
+        new SlashCommandBuilder().setName('fixnames').setDescription('تغيير أسماء جميع الأعضاء إلى mars/ Nickname')
     ].map(cmd => cmd.toJSON());
 
     const rest = new REST({ version: '10' }).setToken(BOT_TOKEN);
@@ -107,7 +109,25 @@ client.once('ready', async () => {
         console.error('خطأ تسجيل الأوامر:', error.message);
     }
 
-    // فحص تقارير الدوام الأسبوعية والشهرية
+    // الاتصال الصوتي 24/7
+    if (db.settings.voice247) {
+        try {
+            const guild = client.guilds.cache.get(GUILD_ID);
+            if (guild) {
+                joinVoiceChannel({
+                    channelId: db.settings.voice247,
+                    guildId: guild.id,
+                    adapterCreator: guild.voiceAdapterCreator,
+                    selfDeaf: true
+                });
+                console.log("🔊 تم الاتصال بالروم الصوتي 24/7 بنجاح!");
+            }
+        } catch (e) {
+            console.log("خطأ الاتصال الصوتي 24/7:", e.message);
+        }
+    }
+
+    // فحص تقارير الدوام كل دقيقة
     setInterval(checkDutySchedules, 60000); 
 });
 
@@ -117,7 +137,7 @@ function checkDutySchedules() {
     if (now.getDay() === 5 && now.getHours() === 23 && now.getMinutes() === 59) {
         sendDutyReport('weekly');
     }
-    // تقرير شهري نهاية الشهر
+    // تقرير شهري في أخر يوم من الشهر
     const isLastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate() === now.getDate();
     if (isLastDay && now.getHours() === 23 && now.getMinutes() === 59) {
         sendDutyReport('monthly');
@@ -133,14 +153,14 @@ async function sendDutyReport(type) {
         .sort((a, b) => b[1].totalSeconds - a[1].totalSeconds)
         .slice(0, 10);
 
-    let title = type === 'weekly' ? '📊 التقرير الأسبوعي لدوام الأعضاء (Weekly Duty Top)' : '📅 التقرير الشهري الإجمالي للدوام (Monthly Duty Top)';
-    let desc = `أكثر الأعضاء نشاطاً وعملاً خلال هذه الفترة:\n\n`;
+    let title = type === 'weekly' ? '📊 التقرير الأسبوعي لدوام الأعضاء (Weekly Duty Leaderboard)' : '📅 التقرير الشهري الإجمالي لدوام الأعضاء (Monthly Duty Leaderboard)';
+    let desc = `إليك أكثر الأعضاء نشاطاً وحضوراً خلال هذه الفترة:\n\n`;
 
     if (sorted.length === 0) {
         desc += 'لا توجد بيانات دوام مسجلة.';
     } else {
         sorted.forEach(([userId, data], index) => {
-            desc += `**#${index + 1}** <@${userId}> ➔ الوقت الإجمالي: **${formatTime(data.totalSeconds)}** (${data.sessions || 0} جلسة)\n`;
+            desc += `**#${index + 1}** <@${userId}> ➔ الوقت الإجمالي: **${formatTime(data.totalSeconds)}** (${data.sessions || 0} جلسة عمل)\n`;
         });
     }
 
@@ -153,7 +173,7 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.isChatInputCommand()) {
             if (interaction.commandName === 'fixnames') {
                 if (!interaction.member.permissions.has(PermissionFlagsBits.Administrator)) {
-                    return interaction.reply({ content: '❌ هذا الأمر مخصص للإدارة العليا فقط!', ephemeral: true });
+                    return interaction.reply({ content: '❌ مخصص للإدارة العليا فقط!', ephemeral: true });
                 }
 
                 await interaction.deferReply({ ephemeral: true });
@@ -179,18 +199,18 @@ client.on('interactionCreate', async (interaction) => {
                 }
 
                 const embed = new EmbedBuilder()
-                    .setTitle('📌 لوحة تحكم سيرفر Marsa RP الرئيسية')
-                    .setDescription('اختر الخيار المطلوب من القائمة المنسدلة بالأسفل:')
+                    .setTitle('📌 لوحة تحكم سيرفر Marsa RP الرئيسية (All-In-One Panel)')
+                    .setDescription('اختر النظام والإعداد المراد التحكم به بالكامل من القائمة بالأسفل:')
                     .setColor(0x00AE86);
 
                 const menu = new StringSelectMenuBuilder()
                     .setCustomId('admin_main_menu')
-                    .setPlaceholder('... اختر خيار الإعداد والتحكم')
+                    .setPlaceholder('... اختر الخيار المطلوب لإعداده')
                     .addOptions([
-                        { label: 'إعداد Waiting for Interview', description: 'تحديد القناة، ورتبة المنشن', value: 'opt_setup_w_interview', emoji: '🎙️' },
-                        { label: 'إعداد Waiting for Help', description: 'تحديد قناة المساعدة ورتبة الدعم', value: 'opt_setup_w_help', emoji: '❓' },
-                        { label: 'إعداد نظام التذاكر (Ticket Setup)', description: 'إنشاء تكت Dev App, Staff, Interview وتحديد الأسئلة', value: 'opt_setup_tickets', emoji: '🎫' },
-                        { label: 'إعداد نظام تسجيل الدوام والوقت', description: 'نشر زر بدء الوقت والتقارير الأسبوعية/الشهري', value: 'opt_setup_work_timer', emoji: '⏱️' }
+                        { label: 'إعداد نظام تسجيل الدوام والساعات', description: 'تحديد القناة ونشر أزرار الوقت والتقارير التلقائية', value: 'opt_setup_work_timer', emoji: '⏱️' },
+                        { label: 'إعداد نظام التقديمات (Applications)', description: 'إعداد Dev App, Staff App أو Interview App والأسئلة', value: 'opt_setup_apps', emoji: '📝' },
+                        { label: 'تفعيل إكتيف صوتي 24/7 (Voice Channel)', description: 'دخول البوت لروم صوتي للبقاء متصلاً دائماً', value: 'opt_setup_voice_247', emoji: '🔊' },
+                        { label: 'إعداد Waiting for Interview / Help', description: 'تحديد قنوات الانتظار ورتب الإشعار', value: 'opt_setup_waiting', emoji: '⏳' }
                     ]);
 
                 return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
@@ -218,37 +238,93 @@ client.on('interactionCreate', async (interaction) => {
         if (interaction.isStringSelectMenu() && interaction.customId === 'admin_main_menu') {
             const val = interaction.values[0];
 
-            if (val === 'opt_setup_w_interview') {
-                const modal = new ModalBuilder().setCustomId('modal_w_interview').setTitle('إعداد Waiting for Interview');
-                const chan = new TextInputBuilder().setCustomId('w_int_chan').setLabel('آيدي القناة (Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
-                const role = new TextInputBuilder().setCustomId('w_int_role').setLabel('آيدي الرتبة للتنبيه (Role ID)').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chan), new ActionRowBuilder().addComponents(role));
-                return await interaction.showModal(modal);
-            }
-
-            if (val === 'opt_setup_w_help') {
-                const modal = new ModalBuilder().setCustomId('modal_w_help').setTitle('إعداد Waiting for Help');
-                const chan = new TextInputBuilder().setCustomId('w_help_chan').setLabel('آيدي القناة (Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
-                const role = new TextInputBuilder().setCustomId('w_help_role').setLabel('آيدي رتبة الدعم (Role ID)').setStyle(TextInputStyle.Short).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chan), new ActionRowBuilder().addComponents(role));
-                return await interaction.showModal(modal);
-            }
-
-            if (val === 'opt_setup_tickets') {
-                const modal = new ModalBuilder().setCustomId('modal_ticket_setup').setTitle('إعداد نظام التذاكر والأسئلة');
-                const chan = new TextInputBuilder().setCustomId('t_post_chan').setLabel('آيدي القناة لنشر أزرار التذاكر').setStyle(TextInputStyle.Short).setRequired(true);
-                const logChan = new TextInputBuilder().setCustomId('t_recv_chan').setLabel('آيدي القناة المستقبلة للإجابات').setStyle(TextInputStyle.Short).setRequired(true);
-                const role = new TextInputBuilder().setCustomId('t_support_role').setLabel('آيدي الرتبة المستقبلة (Role ID)').setStyle(TextInputStyle.Short).setRequired(true);
-                const qCount = new TextInputBuilder().setCustomId('t_questions_list').setLabel('اكتب الأسئلة (مفصولة بفاصلة ,)').setStyle(TextInputStyle.Paragraph).setRequired(true);
-                modal.addComponents(new ActionRowBuilder().addComponents(chan), new ActionRowBuilder().addComponents(logChan), new ActionRowBuilder().addComponents(role), new ActionRowBuilder().addComponents(qCount));
-                return await interaction.showModal(modal);
-            }
-
             if (val === 'opt_setup_work_timer') {
-                const modal = new ModalBuilder().setCustomId('modal_setup_work_chan').setTitle('قناة زر الدوام وحاسبة الوقت');
-                const chan = new TextInputBuilder().setCustomId('work_post_chan').setLabel('آيدي القناة لنشر زر الدوام').setStyle(TextInputStyle.Short).setRequired(true);
+                const modal = new ModalBuilder().setCustomId('modal_setup_work_chan').setTitle('إعداد قناة الدوام والتقارير');
+                const chan = new TextInputBuilder().setCustomId('work_post_chan').setLabel('آيدي القناة لنشر أزرار الدوام والتقارير').setStyle(TextInputStyle.Short).setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(chan));
                 return await interaction.showModal(modal);
+            }
+
+            if (val === 'opt_setup_apps') {
+                const embed = new EmbedBuilder()
+                    .setTitle('📝 اختر نوع التقديم (Application Type)')
+                    .setDescription('اختر نوع التقديم لتحديد القناة والأسئلة الخاصة به:')
+                    .setColor(0x3498DB);
+
+                const appMenu = new StringSelectMenuBuilder()
+                    .setCustomId('select_app_config_type')
+                    .setPlaceholder('... اختر نوع التقديم')
+                    .addOptions([
+                        { label: 'Developer Application', description: 'إعداد تقديم المطورين (Dev App)', value: 'app_dev', emoji: '💻' },
+                        { label: 'Staff Application', description: 'إعداد تقديم طاقم الستاف (Staff App)', value: 'app_staff', emoji: '🛡️' },
+                        { label: 'Interview Application', description: 'إعداد تقديم المقابلات (Interview App)', value: 'app_interview', emoji: '🎙️' }
+                    ]);
+
+                return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(appMenu)], ephemeral: true });
+            }
+
+            if (val === 'opt_setup_voice_247') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_voice_247').setTitle('تفعيل روم صوتي 24/7');
+                const vChan = new TextInputBuilder().setCustomId('voice_chan_id').setLabel('آيدي القناة الصوتية (Voice Channel ID)').setStyle(TextInputStyle.Short).setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(vChan));
+                return await interaction.showModal(modal);
+            }
+
+            if (val === 'opt_setup_waiting') {
+                const modal = new ModalBuilder().setCustomId('modal_setup_waiting').setTitle('إعداد قنوات الانتظار');
+                const intChan = new TextInputBuilder().setCustomId('w_int_chan').setLabel('آيدي قناة Waiting Interview').setStyle(TextInputStyle.Short).setRequired(false);
+                const helpChan = new TextInputBuilder().setCustomId('w_help_chan').setLabel('آيدي قناة Waiting Help').setStyle(TextInputStyle.Short).setRequired(false);
+                modal.addComponents(new ActionRowBuilder().addComponents(intChan), new ActionRowBuilder().addComponents(helpChan));
+                return await interaction.showModal(modal);
+            }
+        }
+
+        if (interaction.isStringSelectMenu() && interaction.customId === 'select_app_config_type') {
+            const chosenType = interaction.values[0];
+            
+            let titleText = 'إعداد تقديم المطورين (Dev App)';
+            if (chosenType === 'app_staff') titleText = 'إعداد تقديم الستاف (Staff App)';
+            if (chosenType === 'app_interview') titleText = 'إعداد تقديم الإنترفيو (Interview App)';
+
+            const modal = new ModalBuilder().setCustomId(`modal_config_app_${chosenType}`).setTitle(titleText);
+            const postChan = new TextInputBuilder().setCustomId('post_chan_id').setLabel('آيدي قناة نشر أزرار التقديم').setStyle(TextInputStyle.Short).setRequired(true);
+            const recvChan = new TextInputBuilder().setCustomId('recv_chan_id').setLabel('آيدي القناة المستقبلة للإجابات').setStyle(TextInputStyle.Short).setRequired(true);
+            const questions = new TextInputBuilder().setCustomId('questions_list').setLabel('اكتب الأسئلة (فصل بين كل سؤال بـ ,)').setStyle(TextInputStyle.Paragraph).setRequired(true);
+
+            modal.addComponents(
+                new ActionRowBuilder().addComponents(postChan),
+                new ActionRowBuilder().addComponents(recvChan),
+                new ActionRowBuilder().addComponents(questions)
+            );
+
+            return await interaction.showModal(modal);
+        }
+
+        if (interaction.isButton() && interaction.customId.startsWith('start_app_btn_')) {
+            const appType = interaction.customId.replace('start_app_btn_', '');
+            const appData = db.settings.apps[appType];
+
+            if (!appData || !appData.questions || appData.questions.length === 0) {
+                return await interaction.reply({ content: '❌ لم يتم إعداد أسئلة هذا التقديم بعد!', ephemeral: true });
+            }
+
+            const uid = interaction.user.id;
+            db.userSessions[uid] = {
+                type: appType,
+                questions: appData.questions,
+                recvChanId: appData.recvChanId,
+                currentStep: 0,
+                answers: []
+            };
+            saveDB();
+
+            await interaction.reply({ content: '📥 **تم بدء التقديم!** تم إرسال السؤال الأول لك في الرسائل الخاصة (DM).', ephemeral: true });
+
+            try {
+                const dm = await interaction.user.createDM();
+                await dm.send(`مرحباً بك في تقديم **${appType.toUpperCase()}**!\n\n❓ **السؤال (1/${appData.questions.length}):** ${appData.questions[0]}`);
+            } catch (e) {
+                await interaction.followUp({ content: '❌ تعذر إرسال رسالة لك بالخاص، يرجى فتح الخاص في إعدادات الأمان.', ephemeral: true });
             }
         }
 
@@ -283,94 +359,10 @@ client.on('interactionCreate', async (interaction) => {
                     ephemeral: true 
                 });
             }
-
-            if (interaction.customId === 'btn_open_ticket_menu') {
-                const embed = new EmbedBuilder()
-                    .setTitle('🎫 اختر قسم التذكرة التي ترغب بفتحها')
-                    .setDescription('يرجى اختيار القسم المناسب، وسيقوم البوت بمراسلتك في الخاص للبدء بالإجابة على الأسئلة:')
-                    .setColor(0x3498DB);
-
-                const menu = new StringSelectMenuBuilder()
-                    .setCustomId('select_ticket_type')
-                    .setPlaceholder('... اختر الفريق المستهدف')
-                    .addOptions([
-                        { label: 'Developer Team Ticket', description: 'تذكرة خاصة بتقديم أو مشاكل المطورين', value: 'ticket_dev', emoji: '💻' },
-                        { label: 'Staff Team Ticket', description: 'تذكرة خاصة بطاقم الإدارة والستاف', value: 'ticket_staff', emoji: '🛡️' },
-                        { label: 'Interview Team Ticket', description: 'تذكرة خاصة بالمقابلات الشخصية والإنترفيو', value: 'ticket_interview', emoji: '🎙️' }
-                    ]);
-
-                return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
-            }
-        }
-
-        if (interaction.isStringSelectMenu() && interaction.customId === 'select_ticket_type') {
-            const ticketType = interaction.values[0];
-            const uid = interaction.user.id;
-            const questions = db.settings.tickets?.questions || ["ما هو اسمك وعمرك؟", "ما هي خبرتك السابقة في الرول بلاي؟"];
-
-            db.userSessions[uid] = {
-                type: ticketType,
-                questions: questions,
-                currentStep: 0,
-                answers: []
-            };
-            saveDB();
-
-            await interaction.reply({ content: '📥 **تم بدء التذكرة!** افحص رسائلك الخاصة (DM) الآن للإجابة على الأسئلة.', ephemeral: true });
-
-            try {
-                const dm = await interaction.user.createDM();
-                await dm.send(`مرحباً بك! لقد اخترت تذكرة **${ticketType.toUpperCase()}**.\n\n❓ **السؤال الأول (1/${questions.length}):** ${questions[0]}`);
-            } catch (e) {
-                await interaction.followUp({ content: '❌ تعذر إرسال رسالة لك بالخاص، يرجى فتح الرسائل الخاصة.', ephemeral: true });
-            }
         }
 
         if (interaction.isModalSubmit()) {
             await interaction.deferReply({ ephemeral: true });
-
-            if (interaction.customId === 'modal_w_interview') {
-                db.settings.waitingInterview = {
-                    chanId: interaction.fields.getTextInputValue('w_int_chan'),
-                    roleId: interaction.fields.getTextInputValue('w_int_role')
-                };
-                saveDB();
-                return await interaction.editReply({ content: '✅ تم ضبط إعدادات Waiting for Interview بنجاح!' });
-            }
-
-            if (interaction.customId === 'modal_w_help') {
-                db.settings.waitingHelp = {
-                    chanId: interaction.fields.getTextInputValue('w_help_chan'),
-                    roleId: interaction.fields.getTextInputValue('w_help_role')
-                };
-                saveDB();
-                return await interaction.editReply({ content: '✅ تم ضبط إعدادات Waiting for Help بنجاح!' });
-            }
-
-            if (interaction.customId === 'modal_ticket_setup') {
-                const postChanId = interaction.fields.getTextInputValue('t_post_chan');
-                const recvChanId = interaction.fields.getTextInputValue('t_recv_chan');
-                const roleId = interaction.fields.getTextInputValue('t_support_role');
-                const rawQuestions = interaction.fields.getTextInputValue('t_questions_list');
-
-                const questionsArr = rawQuestions.split(',').map(q => q.trim()).filter(q => q.length > 0);
-
-                db.settings.tickets = { postChanId, recvChanId, roleId, questions: questionsArr };
-                saveDB();
-
-                const postChannel = await client.channels.fetch(postChanId).catch(() => null);
-                if (postChannel) {
-                    const embed = new EmbedBuilder()
-                        .setTitle('🎫 نظام فتح التذاكر والإنترفيو (Ticket System)')
-                        .setDescription('اضغط على الزر بالأسفل لاختيار نوع التذكرة والبدء بالإجابة على الأسئلة في الخاص:')
-                        .setColor(0x00FF7F);
-
-                    const btn = new ButtonBuilder().setCustomId('btn_open_ticket_menu').setLabel('📩 فتح تذكرة جديدة').setStyle(ButtonStyle.Primary);
-                    await postChannel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] });
-                }
-
-                return await interaction.editReply({ content: '✅ تم نشر نظام التذاكر بنجاح في القناة المحددة!' });
-            }
 
             if (interaction.customId === 'modal_setup_work_chan') {
                 const chanId = interaction.fields.getTextInputValue('work_post_chan');
@@ -380,8 +372,8 @@ client.on('interactionCreate', async (interaction) => {
                 const channel = await client.channels.fetch(chanId).catch(() => null);
                 if (channel) {
                     const embed = new EmbedBuilder()
-                        .setTitle('⏱️ نظام حساب أوقات الدوام الساعي (Duty Hours Counter)')
-                        .setDescription('اضغط على **🟢 بدء وقت الدوام** لبدء العداد تلقائياً، وعند انتهائك اضغط على **🔴 إيقاف الدوام** لحساب الإجمالي:')
+                        .setTitle('⏱️ نظام حساب أوقات الدوام (Duty Hours Counter)')
+                        .setDescription('اضغط على **🟢 بدء وقت الدوام** لبدء احتساب وقتك تلقائياً، وعند انتهائك اضغط على **🔴 إيقاف الدوام** لحفظ الساعات.\n\n📅 **ملاحظة:** يتم إرسال التقرير الأسبوعي والشهري التلقائي في هذه القناة.')
                         .setColor(0xF39C12);
 
                     const row = new ActionRowBuilder().addComponents(
@@ -392,7 +384,62 @@ client.on('interactionCreate', async (interaction) => {
                     await channel.send({ embeds: [embed], components: [row] });
                 }
 
-                return await interaction.editReply({ content: '✅ تم نشر زر تسجيل الدوام وحساب الساعات بنجاح!' });
+                return await interaction.editReply({ content: `✅ **تم نشر زر الدوام وإعادة توجيه التقارير الأسبوعية والشهري لهذه القناة!** (<#${chanId}>)` });
+            }
+
+            if (interaction.customId.startsWith('modal_config_app_')) {
+                const appType = interaction.customId.replace('modal_config_app_', '');
+                const postChanId = interaction.fields.getTextInputValue('post_chan_id');
+                const recvChanId = interaction.fields.getTextInputValue('recv_chan_id');
+                const rawQuestions = interaction.fields.getTextInputValue('questions_list');
+
+                const questionsArr = rawQuestions.split(',').map(q => q.trim()).filter(q => q.length > 0);
+
+                db.settings.apps[appType] = {
+                    postChanId,
+                    recvChanId,
+                    questions: questionsArr
+                };
+                saveDB();
+
+                const postChannel = await client.channels.fetch(postChanId).catch(() => null);
+                if (postChannel) {
+                    let typeName = 'المطورين (Dev Application)';
+                    if (appType === 'app_staff') typeName = 'طاقم الستاف (Staff Application)';
+                    if (appType === 'app_interview') typeName = 'المقابلات (Interview Application)';
+
+                    const embed = new EmbedBuilder()
+                        .setTitle(`📝 تقديم ${typeName}`)
+                        .setDescription('اضغط على الزر بالأسفل للبدء بالتقديم والإجابة على الأسئلة عبر الرسائل الخاصة (DM):')
+                        .setColor(0x00FF7F);
+
+                    const btn = new ButtonBuilder()
+                        .setCustomId(`start_app_btn_${appType}`)
+                        .setLabel(`🚀 بدء تقديم ${appType.replace('app_', '').toUpperCase()}`)
+                        .setStyle(ButtonStyle.Success);
+
+                    await postChannel.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(btn)] });
+                }
+
+                return await interaction.editReply({ content: `✅ **تم إعداد ونشر تقديم ${appType.toUpperCase()} بنجاح!**` });
+            }
+
+            if (interaction.customId === 'modal_setup_voice_247') {
+                const vChanId = interaction.fields.getTextInputValue('voice_chan_id');
+                db.settings.voice247 = vChanId;
+                saveDB();
+
+                try {
+                    joinVoiceChannel({
+                        channelId: vChanId,
+                        guildId: interaction.guild.id,
+                        adapterCreator: interaction.guild.voiceAdapterCreator,
+                        selfDeaf: true
+                    });
+                    return await interaction.editReply({ content: `✅ **تم تفعيل وضع 24/7 بنجاح!** دخل البوت في الروم الصوتي <#${vChanId}> ولن يخرج منه.` });
+                } catch (e) {
+                    return await interaction.editReply({ content: `❌ تعذر الدخول للروم الصوتي، تأكد من صحة الآيدي وصلاحيات البوت.` });
+                }
             }
         }
     } catch (err) {
@@ -403,4 +450,44 @@ client.on('interactionCreate', async (interaction) => {
 client.on('messageCreate', async (message) => {
     if (message.author.bot || !message.channel.isDMBased()) return;
 
-    const uid =
+    const uid = message.author.id;
+    const session = db.userSessions[uid];
+
+    if (session) {
+        session.answers.push(message.content);
+        session.currentStep += 1;
+
+        if (session.currentStep < session.questions.length) {
+            const nextQ = session.questions[session.currentStep];
+            await message.reply(`❓ **السؤال (${session.currentStep + 1}/${session.questions.length}):** ${nextQ}`);
+            saveDB();
+        } else {
+            await message.reply('🎉 **تم استلام جميع إجاباتك بنجاح!** تم إرسال تقديمك إلى القناة المخصصة للمراجعة.');
+
+            if (session.recvChanId) {
+                const targetChan = await client.channels.fetch(session.recvChanId).catch(() => null);
+                if (targetChan) {
+                    let desc = `👤 **صاحب التقديم:** <@${uid}>\n📋 **نوع التقديم:** \`${session.type.replace('app_', '').toUpperCase()}\`\n\n`;
+                    session.questions.forEach((q, idx) => {
+                        desc += `**س${idx + 1}: ${q}**\nج: ${session.answers[idx]}\n\n`;
+                    });
+
+                    const embed = new EmbedBuilder()
+                        .setTitle(`📥 طلب تقديم جديد - ${session.type.replace('app_', '').toUpperCase()}`)
+                        .setDescription(desc)
+                        .setColor(0x9B59B6)
+                        .setTimestamp();
+
+                    await targetChan.send({ embeds: [embed] });
+                }
+            }
+
+            delete db.userSessions[uid];
+            saveDB();
+        }
+    }
+});
+
+process.on('unhandledRejection', error => console.error('استثناء غير معالج:', error));
+
+client.login(BOT_TOKEN);
