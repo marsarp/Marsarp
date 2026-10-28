@@ -21,8 +21,6 @@ const fs = require('fs');
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const CLIENT_ID = '1560278126242562149';
 const GUILD_ID  = '1536367054586642512';
-
-// 👑 Super Admin ID الخاص بك
 const SUPER_ADMIN_ID = '1525233760058998884';
 
 if (!BOT_TOKEN) {
@@ -95,7 +93,6 @@ function hasAdminPermission(interaction) {
     return interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 }
 
-// 🛡️ حماية السيرفر، الترحيب التلقائي، والتسمية التلقائية بالنيكنيم
 client.on('guildMemberAdd', async (member) => {
     try {
         if (member.user.bot && member.id !== CLIENT_ID) {
@@ -108,7 +105,6 @@ client.on('guildMemberAdd', async (member) => {
             await member.setNickname(`${tag} ${member.displayName}`);
         }
 
-        // نظام الترحيب التلقائي (Welcome System)
         if (db.settings.logChannel) {
             const logChan = await client.channels.fetch(db.settings.logChannel).catch(() => null);
             if (logChan) {
@@ -140,7 +136,7 @@ client.once('ready', async () => {
             Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
             { body: commands }
         );
-        console.log('🎉 تم تسجيل الأوامر الفورية بنجاح!');
+        console.log('🎉 تم تسجيل الأوامر بنجاح!');
     } catch (error) {
         console.error('خطأ تسجيل الأوامر:', error.message);
     }
@@ -228,6 +224,8 @@ client.on('interactionCreate', async (interaction) => {
                     return interaction.reply({ content: '❌ مخصص للإدارة العليا فقط!', ephemeral: true });
                 }
 
+                await interaction.deferReply({ ephemeral: true });
+
                 const embed = new EmbedBuilder()
                     .setTitle('📌 لوحة تحكم سيرفر Marsa RP الرئيسية (All-In-One Panel)')
                     .setDescription('اختر النظام والإعداد المراد التحكم به بالكامل:')
@@ -247,10 +245,12 @@ client.on('interactionCreate', async (interaction) => {
                         { label: 'تحديد تاغ السيرفر (Server Tag)', description: 'تحديد وتغيير التاغ الرسمي للسيرفر', value: 'opt_setup_server_tag', emoji: '👑' }
                     ]);
 
-                return await interaction.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)], ephemeral: true });
+                return await interaction.editReply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
             }
 
             if (interaction.commandName === 'staffpanel') {
+                await interaction.deferReply({ ephemeral: true });
+
                 const embed = new EmbedBuilder()
                     .setTitle('🛡️ لوحة طاقم الدعم والستاف (Staff Panel)')
                     .setDescription('إدارة العقوبات والسجلات حسب قوانين السيرفر:')
@@ -262,7 +262,7 @@ client.on('interactionCreate', async (interaction) => {
                     new ButtonBuilder().setCustomId('btn_show_rules').setLabel('📜 جدول قوانين المخالفات').setStyle(ButtonStyle.Primary)
                 );
 
-                return await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+                return await interaction.editReply({ embeds: [embed], components: [row] });
             }
         }
 
@@ -493,7 +493,7 @@ client.on('interactionCreate', async (interaction) => {
                             .setColor(0x990000)
                             .setTimestamp();
                         if (proofUrl && proofUrl.startsWith('http')) embed.setImage(proofUrl);
-                        await banChan.send({ embeds: [embed] });
+                        await banChan.send({ content: `<@${targetId}>`, embeds: [embed] });
                     }
                 }
                 return await interaction.editReply({ content: '✅ تم تسجيل ونشر البان بنجاح!' });
@@ -587,4 +587,4 @@ client.on('messageCreate', async (message) => {
 
 process.on('unhandledRejection', error => console.error('استثناء غير معالج:', error));
 
-client.login(MTU2NTAwOTg4NjY4MzcyOTk0MA.GRs3GT.IgfD1xWP5J6LSL4kwZYTtDamvYoCcPpbcQZbn8);
+client.login(MTU2NTAwOTg4NjY4MzcyOTk0MA.GOKG7c.omyyalfP5Kws34Patmet0AzXawwLmGO0bDKFo4);
